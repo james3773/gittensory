@@ -24,8 +24,9 @@ vi.mock("../../src/github/app", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../src/github/app")>()),
   createInstallationToken: vi.fn(async () => "test-installation-token"),
 }));
-// The accept-time live re-check (#2126) defaults to "everything still looks fine" so the existing accept tests
-// stay deterministic; individual tests below override these to exercise the staleness-supersede path.
+// The accept-time live re-check (#2126) AND the actuation-time live CI re-check (#2128) both default to
+// "everything still looks fine" so the existing accept tests stay deterministic; individual tests below
+// override these to exercise the staleness-supersede / staleness-denial paths.
 vi.mock("../../src/github/backfill", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../src/github/backfill")>()),
   fetchLiveCiAggregate: vi.fn(async () => ({ ciState: "passed" as const, hasPending: false, hasVisiblePending: false, failingDetails: [], nonRequiredFailingDetails: [] })),
