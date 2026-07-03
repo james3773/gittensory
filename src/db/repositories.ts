@@ -514,6 +514,10 @@ export async function getRepositorySettings(env: Env, fullName: string): Promise
       requireFreshRebaseWindowMinutes: null,
       accountAgeThresholdDays: null,
       newAccountLabel: "new-account",
+      commandRateLimitPolicy: "off",
+      commandRateLimitMaxPerWindow: 20,
+      commandRateLimitAiMaxPerWindow: 5,
+      commandRateLimitWindowHours: 24,
     };
   }
   return {
@@ -569,6 +573,10 @@ export async function getRepositorySettings(env: Env, fullName: string): Promise
     requireFreshRebaseWindowMinutes: normalizeOpenItemCap(row.requireFreshRebaseWindowMinutes),
     accountAgeThresholdDays: normalizeOpenItemCap(row.accountAgeThresholdDays),
     newAccountLabel: row.newAccountLabel,
+    commandRateLimitPolicy: normalizeCommandRateLimitPolicy(row.commandRateLimitPolicy),
+    commandRateLimitMaxPerWindow: normalizePositiveIntWithDefault(row.commandRateLimitMaxPerWindow, 20),
+    commandRateLimitAiMaxPerWindow: normalizePositiveIntWithDefault(row.commandRateLimitAiMaxPerWindow, 5),
+    commandRateLimitWindowHours: normalizePositiveIntWithDefault(row.commandRateLimitWindowHours, 24),
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
@@ -656,6 +664,10 @@ export async function upsertRepositorySettings(env: Env, settings: Partial<Repos
     requireFreshRebaseWindowMinutes: normalizeOpenItemCap(settings.requireFreshRebaseWindowMinutes),
     accountAgeThresholdDays: normalizeOpenItemCap(settings.accountAgeThresholdDays),
     newAccountLabel: settings.newAccountLabel ?? "new-account",
+    commandRateLimitPolicy: normalizeCommandRateLimitPolicy(settings.commandRateLimitPolicy),
+    commandRateLimitMaxPerWindow: normalizePositiveIntWithDefault(settings.commandRateLimitMaxPerWindow, 20),
+    commandRateLimitAiMaxPerWindow: normalizePositiveIntWithDefault(settings.commandRateLimitAiMaxPerWindow, 5),
+    commandRateLimitWindowHours: normalizePositiveIntWithDefault(settings.commandRateLimitWindowHours, 24),
   };
   const db = getDb(env.DB);
   await db
@@ -713,6 +725,10 @@ export async function upsertRepositorySettings(env: Env, settings: Partial<Repos
       requireFreshRebaseWindowMinutes: resolved.requireFreshRebaseWindowMinutes,
       accountAgeThresholdDays: resolved.accountAgeThresholdDays,
       newAccountLabel: resolved.newAccountLabel,
+      commandRateLimitPolicy: resolved.commandRateLimitPolicy,
+      commandRateLimitMaxPerWindow: resolved.commandRateLimitMaxPerWindow,
+      commandRateLimitAiMaxPerWindow: resolved.commandRateLimitAiMaxPerWindow,
+      commandRateLimitWindowHours: resolved.commandRateLimitWindowHours,
       updatedAt: nowIso(),
     })
     .onConflictDoUpdate({
@@ -771,6 +787,10 @@ export async function upsertRepositorySettings(env: Env, settings: Partial<Repos
         requireFreshRebaseWindowMinutes: resolved.requireFreshRebaseWindowMinutes,
         accountAgeThresholdDays: resolved.accountAgeThresholdDays,
         newAccountLabel: resolved.newAccountLabel,
+        commandRateLimitPolicy: resolved.commandRateLimitPolicy,
+        commandRateLimitMaxPerWindow: resolved.commandRateLimitMaxPerWindow,
+        commandRateLimitAiMaxPerWindow: resolved.commandRateLimitAiMaxPerWindow,
+        commandRateLimitWindowHours: resolved.commandRateLimitWindowHours,
         updatedAt: nowIso(),
       },
     });
@@ -2292,6 +2312,36 @@ export async function countRecentAuditEventsForActorAndTarget(env: Env, actor: s
   /* v8 ignore next -- count(*) always returns exactly one row; the empty-array guard only satisfies the destructure type. */
   if (!row) return 0;
   return row.count;
+}
+
+/** Whether `deliveryId` has ALREADY been recorded for this (actor, eventType, targetKey) within `sinceIso` --
+ *  makes a counting/rate-limit check idempotent against a REDELIVERED or retried webhook event (GitHub can
+ *  and does redeliver the same issue_comment event), which would otherwise increment the counter twice for
+ *  one real invocation and can incorrectly rate-limit it (#2560). Scoped to a short recent window, not the
+ *  full rate-limit window -- a genuine redelivery lands within seconds, not hours later.
+ *  Gate review finding: an earlier version matched deliveryId IN MEMORY over a `.limit(50)` slice with no
+ *  ORDER BY -- once an actor accumulated more than 50 matching rows within the window (a burst/spam scenario,
+ *  exactly what this feature exists to handle), the row carrying the original deliveryId could be excluded
+ *  from that arbitrary slice, producing a false negative right when it matters most. The deliveryId match is
+ *  now pushed into the SQL predicate itself (json_extract on metadataJson, mirroring
+ *  countRecentDeadLettersByType's own json_extract usage below), so it's an exact match against every row in
+ *  the window regardless of how many other rows exist for this actor/event/target. */
+export async function hasAuditEventForDelivery(env: Env, actor: string, eventType: string, targetKey: string, deliveryId: string, sinceIso: string): Promise<boolean> {
+  const db = getDb(env.DB);
+  const [row] = await db
+    .select({ count: sql<number>`count(*)` })
+    .from(auditEvents)
+    .where(
+      and(
+        eq(auditEvents.actor, actor),
+        eq(auditEvents.eventType, eventType),
+        eq(auditEvents.targetKey, targetKey),
+        gte(auditEvents.createdAt, sinceIso),
+        sql`json_extract(${auditEvents.metadataJson}, '$.deliveryId') = ${deliveryId}`,
+      ),
+    );
+  /* v8 ignore next -- count(*) always returns exactly one row; the empty-array guard only satisfies the destructure type. */
+  return (row?.count ?? 0) > 0;
 }
 
 /** Observability for the queue dead-letter rate (#1276): how many jobs (across BOTH the maintenance and webhook
@@ -5789,6 +5839,10 @@ function parseAutoCloseExemptLogins(value: string): string[] {
 
 function normalizeReviewNagPolicy(value: string | null | undefined): "off" | "hold" | "close" {
   return value === "hold" || value === "close" ? value : "off";
+}
+
+function normalizeCommandRateLimitPolicy(value: string | null | undefined): "off" | "hold" {
+  return value === "hold" ? value : "off";
 }
 
 // A review-nag threshold/window is a discrete positive count, not a score — reuses the same non-clamping,

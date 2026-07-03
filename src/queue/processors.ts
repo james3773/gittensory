@@ -51,6 +51,7 @@ import {
   recordAgentCommandFeedback,
   recordAuditEvent,
   countRecentAuditEventsForActorAndTarget,
+  hasAuditEventForDelivery,
   recordGateBlockOutcome,
   getGateBlockOutcome,
   isGlobalAgentFrozen,
@@ -138,6 +139,7 @@ import {
   buildMaintainerQueueDigest,
   buildPublicAgentCommandComment,
   type GittensoryMentionCommandName,
+  isAiCostBearingCommand,
   isAuthorizedCommandActor,
   isMaintainerQueueDigestCommand,
   parseAgentCommandFeedbackContext,
@@ -8971,6 +8973,119 @@ async function maybeThrottleReviewNagPing(
   return true;
 }
 
+// Audit eventType for one recorded @gittensory command invocation (#2560). Shared between the recorder below
+// and the cooldown-window count query so a naming drift can't silently under/over-count.
+const COMMAND_RATE_LIMIT_EVENT_TYPE = "github_app.command_invocation";
+// How far back to look for a redelivered webhook's OWN prior invocation record. Deliberately much shorter
+// than the rate-limit window itself (hours) -- a genuine GitHub redelivery lands within seconds/minutes.
+const COMMAND_RATE_LIMIT_REDELIVERY_WINDOW_MS = 10 * 60_000;
+
+/**
+ * Per-command @gittensory rate limit (#2560, anti-abuse): generalizes review-nag's audit-ledger counting
+ * pattern (`countRecentAuditEventsForActorAndTarget`) to EVERY `@gittensory` Q&A command, not just
+ * review-request pings. Keyed by `(actor, command, targetKey)` — the command name is folded into targetKey so
+ * repeatedly invoking ONE command never counts against a DIFFERENT command's own limit. Independent of, and
+ * complementary to, `maybeThrottleReviewNagPing` above: that one stays scoped to the thread's OWN author and
+ * can close a PR; this covers ANY authorized actor invoking ANY command and only ever holds (declines with a
+ * notice), never closes. Off (`commandRateLimitPolicy: "off"`, the default) is a complete no-op.
+ */
+async function maybeThrottleGittensoryCommand(
+  env: Env,
+  args: {
+    deliveryId: string;
+    repoFullName: string;
+    issueNumber: number;
+    installationId: number;
+    commenter: string;
+    command: GittensoryMentionCommandName;
+    settings: RepositorySettings;
+    mode: ReturnType<typeof resolveAgentActionMode>;
+  },
+): Promise<boolean> {
+  /* v8 ignore next -- resolveRepositorySettings always resolves a concrete "off"/"hold"; the undefined side is defensive against the field's optional TS type. */
+  const policy = args.settings.commandRateLimitPolicy ?? "off";
+  if (policy === "off") return false;
+
+  const targetKey = `${args.repoFullName}#${args.issueNumber}#${args.command}`;
+
+  // Webhook redelivery guard: GitHub can and does redeliver the same issue_comment event (timeout/retry) --
+  // without this, a redelivered event would increment the counter a SECOND time for one real invocation and
+  // could incorrectly rate-limit it. Scoped to a short recent window (not the full rate-limit window) — a
+  // genuine redelivery lands within seconds/minutes, not hours later.
+  const redeliverySinceIso = new Date(Date.now() - COMMAND_RATE_LIMIT_REDELIVERY_WINDOW_MS).toISOString();
+  const alreadySeen = await hasAuditEventForDelivery(env, args.commenter, COMMAND_RATE_LIMIT_EVENT_TYPE, targetKey, args.deliveryId, redeliverySinceIso);
+  // Gate review finding: returning `false` here let a redelivered webhook fall through to normal dispatch — a
+  // SECOND run of the (possibly cost-bearing) command for one real invocation, uncounted and unheld. The
+  // original delivery already ran the command and posted its own answer, so short-circuit the replay entirely
+  // (no dispatch, no comment) rather than treating it as an under-threshold pass-through.
+  if (alreadySeen) {
+    await recordAuditEvent(env, {
+      eventType: "github_app.command_redelivery_suppressed",
+      actor: args.commenter,
+      targetKey,
+      outcome: "completed",
+      detail: `redelivered ${args.command} invocation suppressed (deliveryId ${args.deliveryId})`,
+      metadata: { deliveryId: args.deliveryId, repoFullName: args.repoFullName, command: args.command },
+    }).catch(
+      /* v8 ignore next -- fail-safe: an audit write failure never blocks the redelivery suppression itself */
+      () => undefined,
+    );
+    return true;
+  }
+
+  const aiCostBearing = isAiCostBearingCommand(args.command);
+  /* v8 ignore next -- resolveRepositorySettings always resolves a concrete positive integer; the undefined side is defensive against the field's optional TS type. */
+  const maxPerWindow = aiCostBearing
+    ? (args.settings.commandRateLimitAiMaxPerWindow ?? 5)
+    : (args.settings.commandRateLimitMaxPerWindow ?? 20);
+  /* v8 ignore next -- resolveRepositorySettings always resolves a concrete positive integer; the undefined side is defensive against the field's optional TS type. */
+  const windowHours = args.settings.commandRateLimitWindowHours ?? 24;
+  const sinceIso = new Date(Date.now() - windowHours * 60 * 60 * 1000).toISOString();
+  const priorInvocations = await countRecentAuditEventsForActorAndTarget(env, args.commenter, COMMAND_RATE_LIMIT_EVENT_TYPE, targetKey, sinceIso);
+  const invocationCount = priorInvocations + 1; // this invocation counts too
+
+  // Always record the invocation first so the running count reflects reality even when the rest of this
+  // handler short-circuits below (a failed recordAuditEvent must never block command dispatch).
+  await recordAuditEvent(env, {
+    eventType: COMMAND_RATE_LIMIT_EVENT_TYPE,
+    actor: args.commenter,
+    targetKey,
+    outcome: "completed",
+    detail: `invocation ${invocationCount}/${maxPerWindow} within ${windowHours}h window`,
+    metadata: { deliveryId: args.deliveryId, repoFullName: args.repoFullName, command: args.command, aiCostBearing },
+  }).catch(
+    /* v8 ignore next -- fail-safe: an audit write failure never blocks command dispatch */
+    () => undefined,
+  );
+
+  if (invocationCount <= maxPerWindow) return false; // under threshold — normal dispatch proceeds unchanged
+
+  if (args.mode === "live") {
+    await createIssueComment(
+      env,
+      args.installationId,
+      args.repoFullName,
+      args.issueNumber,
+      `@${args.commenter} the \`${args.command}\` command has reached its rate limit (${maxPerWindow} within ${windowHours}h). Please wait for the window to pass before trying again. This is an automated maintenance action.`,
+    ).catch(
+      /* v8 ignore next -- fail-safe: a comment-post failure must not crash the throttle decision itself */
+      () => undefined,
+    );
+  }
+  await recordAuditEvent(env, {
+    eventType: "github_app.command_rate_limit_applied",
+    actor: "gittensory",
+    targetKey,
+    outcome: args.mode === "live" ? "completed" : "denied",
+    detail: `hold applied: ${args.commenter} invoked ${args.command} ${invocationCount} times (limit ${maxPerWindow})`,
+    metadata: { deliveryId: args.deliveryId, repoFullName: args.repoFullName, mode: args.mode, command: args.command },
+  }).catch(
+    /* v8 ignore next -- fail-safe: an audit write failure never blocks the handler */
+    () => undefined,
+  );
+  return true;
+}
+
 async function maybeProcessGittensoryMentionCommand(
   env: Env,
   deliveryId: string,
@@ -9165,6 +9280,21 @@ async function maybeProcessGittensoryMentionCommand(
           : "skipped",
       metadata: { command: command.name, reason: authorization.reason },
     });
+    return true;
+  }
+
+  if (
+    await maybeThrottleGittensoryCommand(env, {
+      deliveryId,
+      repoFullName,
+      issueNumber: issue.number,
+      installationId,
+      commenter,
+      command: command.name,
+      settings,
+      mode: mentionMode,
+    })
+  ) {
     return true;
   }
 
