@@ -19,16 +19,19 @@ function normalizeCandidate(candidate) {
     typeof candidate.repoFullName === "string" ? candidate.repoFullName.trim() : "";
   const issueNumber = candidate.issueNumber;
   const title = typeof candidate.title === "string" ? candidate.title.trim() : "";
-  if (!repoFullName || !Number.isInteger(issueNumber) || issueNumber <= 0 || !title) return null;
+  const [owner, repo, extra] = repoFullName.split("/");
+  if (!owner || !repo || extra !== undefined) return null;
+  if (!Number.isInteger(issueNumber) || issueNumber <= 0 || !title) return null;
+  const canonicalRepoFullName = `${owner}/${repo}`;
   const labels = Array.isArray(candidate.labels)
     ? candidate.labels
         .filter((label) => typeof label === "string" && label.trim())
         .map((label) => label.trim())
     : [];
   return {
-    owner: typeof candidate.owner === "string" ? candidate.owner : repoFullName.split("/")[0] ?? "",
-    repo: typeof candidate.repo === "string" ? candidate.repo : repoFullName.split("/")[1] ?? "",
-    repoFullName,
+    owner: typeof candidate.owner === "string" ? candidate.owner : owner,
+    repo: typeof candidate.repo === "string" ? candidate.repo : repo,
+    repoFullName: canonicalRepoFullName,
     issueNumber,
     title,
     labels,

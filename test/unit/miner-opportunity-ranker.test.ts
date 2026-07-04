@@ -56,12 +56,22 @@ describe("rankCandidateIssues (#2302 follow-up)", () => {
         rawIssue(),
         { ...rawIssue(), issueNumber: "nope" as unknown as number },
         { ...rawIssue(), repoFullName: "" },
+        { ...rawIssue(), repoFullName: "owner-only" },
         null as unknown as ReturnType<typeof rawIssue>,
       ],
       { nowMs: NOW },
     );
     expect(ranked).toHaveLength(1);
     expect(ranked[0]?.issueNumber).toBe(42);
+  });
+
+  it("counts malformed repo slugs as skipped invalid in the summary", () => {
+    const summary = rankCandidateIssuesWithSummary(
+      [rawIssue(), rawIssue({ repoFullName: "owner-only" })],
+      { nowMs: NOW },
+    );
+    expect(summary.issues).toHaveLength(1);
+    expect(summary.skippedInvalid).toBe(1);
   });
 
   it("parses per-repo goal-spec YAML content when ranking", () => {
