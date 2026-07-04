@@ -108,6 +108,9 @@ export function openClaimLedger(dbPath = resolveClaimLedgerDbPath()) {
   const releaseStatement = db.prepare(
     "UPDATE miner_claims SET status = 'released' WHERE repo_full_name = ? AND issue_number = ? AND status = 'active'",
   );
+  const expireStatement = db.prepare(
+    "UPDATE miner_claims SET status = 'expired' WHERE repo_full_name = ? AND issue_number = ? AND status = 'active'",
+  );
   const listAllStatement = db.prepare("SELECT * FROM miner_claims ORDER BY id ASC");
   const listRepoStatement = db.prepare(
     "SELECT * FROM miner_claims WHERE repo_full_name = ? ORDER BY id ASC",
@@ -139,6 +142,14 @@ export function openClaimLedger(dbPath = resolveClaimLedgerDbPath()) {
       const normalizedRepo = normalizeRepoFullName(repoFullName);
       const normalizedIssue = normalizeIssueNumber(issueNumber);
       const result = releaseStatement.run(normalizedRepo, normalizedIssue);
+      if (result.changes === 0) return null;
+      const row = getStatement.get(normalizedRepo, normalizedIssue);
+      return row ? rowToClaim(row) : null;
+    },
+    expireClaim(repoFullName, issueNumber) {
+      const normalizedRepo = normalizeRepoFullName(repoFullName);
+      const normalizedIssue = normalizeIssueNumber(issueNumber);
+      const result = expireStatement.run(normalizedRepo, normalizedIssue);
       if (result.changes === 0) return null;
       const row = getStatement.get(normalizedRepo, normalizedIssue);
       return row ? rowToClaim(row) : null;
@@ -178,6 +189,10 @@ export function recordClaim(claim) {
 
 export function releaseClaim(repoFullName, issueNumber) {
   return getDefaultClaimLedger().releaseClaim(repoFullName, issueNumber);
+}
+
+export function expireClaim(repoFullName, issueNumber) {
+  return getDefaultClaimLedger().expireClaim(repoFullName, issueNumber);
 }
 
 export function listClaims(filter) {
