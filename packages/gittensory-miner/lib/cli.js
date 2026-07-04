@@ -21,6 +21,7 @@ export function printHelp(input) {
       "  gittensory-miner queue list [--repo <owner/repo>] [--json]    List portfolio backlog rows",
       "  gittensory-miner queue next [--json]                          Claim the highest-priority queued item",
       "  gittensory-miner queue done <owner/repo> <identifier> [--json]",
+      "  gittensory-miner ledger list [--repo <owner/repo>] [--since <seq>] [--type <eventType>] [--json]",
       "  gittensory-miner hooks check --tool <name> --input <json> [--json]",
       "  gittensory-miner state get <owner/repo> [--json]",
       "  gittensory-miner state set <owner/repo> <idle|discovering|planning|preparing> [--json]",
