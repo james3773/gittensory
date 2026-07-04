@@ -11,7 +11,7 @@ export type QueueEntry = {
 export type EnqueueItem = {
   repoFullName: string;
   identifier: string;
-  priority?: number;
+  priority?: number | null;
 };
 
 export type PortfolioQueueStore = {

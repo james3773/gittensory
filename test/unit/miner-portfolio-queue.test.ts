@@ -61,6 +61,11 @@ describe("gittensory-miner portfolio/queue store (#2292)", () => {
     expect(typeof entry.enqueuedAt).toBe("string");
   });
 
+  it("treats a null priority as the default 0", () => {
+    const entry = tempStore().enqueue({ repoFullName: "o/a", identifier: "x", priority: null });
+    expect(entry.priority).toBe(0);
+  });
+
   it("dequeues highest-priority first, then by insertion order within a priority band", () => {
     // Freeze the clock so same-priority items share enqueued_at — proving the rowid FIFO tie-break, not a timestamp.
     vi.useFakeTimers();

@@ -54,7 +54,7 @@ function normalizeIdentifier(identifier) {
 
 /** Priority is a placeholder numeric input; an omitted priority defaults to 0, a non-finite or negative one is rejected. */
 function normalizePriority(priority) {
-  if (priority === undefined) return 0;
+  if (priority === undefined || priority === null) return 0;
   if (typeof priority !== "number" || !Number.isFinite(priority) || priority < 0) {
     throw new Error("invalid_priority");
   }
