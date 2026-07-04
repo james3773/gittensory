@@ -75,18 +75,9 @@ export function buildManageStatusSnapshot(readers) {
     const pullNumber = normalizePullNumber(payload.pullNumber);
     if (pullNumber === null) continue;
     const key = rowKey(event.repoFullName, pullNumber);
-    const existing = rows.get(key) ?? {
-      repoFullName: event.repoFullName,
-      pullNumber,
-      branch: null,
-      ciState: "unknown",
-      gateVerdict: null,
-      outcome: null,
-      lastPolledAt: null,
-      portfolioStatus: null,
-    };
+    const existing = rows.get(key);
+    if (!existing) continue;
     mergeManageFields(existing, payload, event.createdAt);
-    rows.set(key, existing);
   }
 
   return [...rows.values()].sort((left, right) => {

@@ -100,17 +100,7 @@ describe("manage status snapshot (#2325)", () => {
       listQueue: () => portfolio.listQueue(),
       readEvents: () => ledger.readEvents(),
     });
-    expect(rows).toHaveLength(2);
-    expect(rows).toContainEqual({
-      repoFullName: "JSONbored/gittensory",
-      pullNumber: 7,
-      branch: "feat/other",
-      ciState: "failure",
-      gateVerdict: "close",
-      outcome: "closed",
-      lastPolledAt: "2026-07-03T14:00:00.000Z",
-      portfolioStatus: null,
-    });
+    expect(rows).toHaveLength(1);
     expect(rows).toContainEqual({
       repoFullName: "acme/widgets",
       pullNumber: 42,
@@ -128,6 +118,31 @@ describe("manage status snapshot (#2325)", () => {
     expect(table).toContain("feat/manage-status");
     expect(table).toContain("success");
     expect(table).toContain("merge");
+  });
+
+  it("ignores manage_pr_update events for PRs no longer in the portfolio queue", () => {
+    const { portfolio, ledger } = tempStores();
+    portfolio.enqueue({ repoFullName: "acme/widgets", identifier: "pr:42", priority: 1 });
+    portfolio.markDone("acme/widgets", "pr:42");
+    ledger.appendEvent({
+      type: MANAGE_STATUS_EVENT_TYPE,
+      repoFullName: "acme/widgets",
+      payload: {
+        pullNumber: 42,
+        branch: "feat/done",
+        ciState: "success",
+        gateVerdict: "merge",
+        outcome: "merged",
+        lastPolledAt: "2026-07-03T15:00:00.000Z",
+      },
+    });
+
+    expect(
+      buildManageStatusSnapshot({
+        listQueue: () => portfolio.listQueue(),
+        readEvents: () => ledger.readEvents(),
+      }),
+    ).toEqual([]);
   });
 
   it("emits stable JSON output shape", () => {
