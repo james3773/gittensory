@@ -17,6 +17,7 @@ export function printHelp(input) {
       "  gittensory-miner status [--json]                              Show installed versions + local state paths",
       "  gittensory-miner doctor [--json]                              Check this laptop is set up correctly",
       "  gittensory-miner manage status [--json]                       Show managed PR rows from local portfolio + ledger",
+      "  gittensory-miner manage poll <owner/repo> <pr#> [--branch <name>] [--json]",
       "  gittensory-miner queue list [--repo <owner/repo>] [--json]    List portfolio backlog rows",
       "  gittensory-miner queue next [--json]                          Claim the highest-priority queued item",
       "  gittensory-miner queue done <owner/repo> <identifier> [--json]",

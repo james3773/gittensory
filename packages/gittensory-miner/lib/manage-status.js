@@ -1,7 +1,7 @@
 import { initEventLedger } from "./event-ledger.js";
 import { initPortfolioQueueStore } from "./portfolio-queue.js";
 
-/** Event vocabulary for manage-phase PR snapshots written by future CI pollers. (#2325) */
+/** Event vocabulary for manage-phase PR snapshots written by manage poll. (#2325) */
 export const MANAGE_PR_UPDATE_EVENT = "manage_pr_update";
 export const MANAGED_PR_IDENTIFIER_PREFIX = "pr:";
 
