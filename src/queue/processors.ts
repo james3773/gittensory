@@ -2051,6 +2051,16 @@ function freshnessBlocksReviewOutput(
   return freshness.status === "stale";
 }
 
+class RetryablePullRequestFreshnessUnavailableError extends RetryableJobError {
+  constructor() {
+    super("live PR state unavailable; retrying review output publication", {
+      retryAfterMs: 60_000,
+      retryKind: "pr_freshness_unavailable",
+    });
+    this.name = "RetryablePullRequestFreshnessUnavailableError";
+  }
+}
+
 async function reviewTargetFreshness(
   env: Env,
   args: {
@@ -2084,6 +2094,12 @@ async function reviewTargetFreshness(
       expectedHeadSha: freshness.expectedHeadSha,
       liveHeadSha: freshness.liveHeadSha,
       liveState: freshness.liveState,
+      ...(freshness.reason === "unavailable"
+        ? {
+            unavailableSource: freshness.unavailableSource ?? "unknown",
+            unavailableDetail: freshness.unavailableDetail ?? null,
+          }
+        : {}),
     },
   }).catch(() => undefined);
   return freshness;
@@ -7138,6 +7154,9 @@ async function maybePublishPrPublicSurface(
         mode,
         { checkRunId: pendingGateCheckRunId },
       ).catch(() => undefined);
+    }
+    if (freshness.reason === "unavailable") {
+      throw new RetryablePullRequestFreshnessUnavailableError();
     }
     return true;
   };
