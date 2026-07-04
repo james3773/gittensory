@@ -156,6 +156,8 @@ export function runManageStatus(args = [], options = {}) {
     return 2;
   }
 
+  const ownsPortfolioQueue = options.initPortfolioQueue === undefined;
+  const ownsEventLedger = options.initEventLedger === undefined;
   const portfolioQueue = (options.initPortfolioQueue ?? initPortfolioQueueStore)();
   const eventLedger = (options.initEventLedger ?? initEventLedger)();
   try {
@@ -167,7 +169,7 @@ export function runManageStatus(args = [], options = {}) {
     }
     return 0;
   } finally {
-    portfolioQueue.close();
-    eventLedger.close();
+    if (ownsPortfolioQueue) portfolioQueue.close();
+    if (ownsEventLedger) eventLedger.close();
   }
 }

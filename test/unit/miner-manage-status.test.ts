@@ -131,11 +131,29 @@ describe("gittensory-miner manage status (#2325)", () => {
     expect(indexLatestManageUpdates(eventLedger.readEvents()).size).toBe(0);
   });
 
+  it("renders numeric queue priority in the table output", () => {
+    const rows = [
+      {
+        repoFullName: "acme/widgets",
+        prNumber: 4,
+        branch: "feat/x",
+        ciState: "success",
+        gateVerdict: "pass",
+        outcome: "ready",
+        lastPolledAt: "2026-07-04T12:00:00.000Z",
+        queueStatus: "queued",
+        priority: 2,
+      },
+    ];
+    expect(renderManageStatusTable(rows)).toContain("     2");
+  });
+
   it("runManageStatus prints table and JSON output", () => {
     const root = mkdtempSync(join(tmpdir(), "gittensory-miner-manage-status-cli-"));
     roots.push(root);
     const portfolioQueue = initPortfolioQueueStore(join(root, "portfolio-queue.sqlite3"));
     const eventLedger = initEventLedger(join(root, "event-ledger.sqlite3"));
+    stores.push(portfolioQueue, eventLedger);
     portfolioQueue.enqueue({ repoFullName: "acme/widgets", identifier: "pr:4", priority: 2 });
     eventLedger.appendEvent({
       type: MANAGE_PR_UPDATE_EVENT,
