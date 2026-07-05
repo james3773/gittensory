@@ -77,6 +77,18 @@ SELFHOST_SETUP_TOKEN=change-this-long-random-value  # unlocks /setup for a fresh
         header instead; never place the setup token in the URL.
       </p>
       <Callout variant="note">
+        <code>https://reviews.example.com</code> above is a placeholder — it assumes you already
+        have a real domain terminating TLS. GitHub delivers webhooks to whatever{" "}
+        <code>PUBLIC_API_ORIGIN</code> you set here, so it must be an address GitHub's servers can
+        actually reach: the <code>caddy</code> profile (see{" "}
+        <Link to="/docs/self-hosting-security">Security</Link>'s TLS termination section) is the
+        shipped way to get one, or bring your own public reverse proxy. The <code>tailscale</code>{" "}
+        profile's private tailnet address does <strong>not</strong> work here — GitHub cannot
+        deliver webhooks to it. A Tailscale-only instance should use brokered pull mode instead (it
+        polls for work rather than receiving pushed webhooks) — see "Pull vs. push relay mode"
+        below.
+      </Callout>
+      <Callout variant="note">
         Manual App creation (below) is still fully supported — for an air-gapped instance, a
         stricter change-review process, or simply a preference for reviewing every permission by
         hand before it exists. Whichever path you take, the resulting App needs the SAME
@@ -243,7 +255,11 @@ ORB_RELAY_MODE=pull  # or omit for push (the default) -- see "Choosing a relay m
         outage more gracefully (see the release checklist's known-warnings table below). Use push
         only once you already have a stable, publicly reachable HTTPS origin for this instance — the
         Direct App setup wizard, for instance, always requires one anyway, so an operator running
-        Direct App today has it available for brokered push mode too.
+        Direct App today has it available for brokered push mode too. See{" "}
+        <Link to="/docs/self-hosting-security">Security</Link>'s TLS termination section for how to
+        stand one up: the <code>caddy</code> profile for a public domain, or note that{" "}
+        <code>tailscale</code>'s private tailnet address does not satisfy push mode's
+        internet-reachable requirement — pull mode is the right fit for a Tailscale-only instance.
       </Callout>
       <Callout variant="warn" title="Brokered mode operational risks">
         Before enabling this for anyone outside a controlled managed-beta cohort, weigh: (1){" "}
@@ -293,15 +309,28 @@ ORB_RELAY_MODE=pull  # or omit for push (the default) -- see "Choosing a relay m
         scenario for the smoke tests that exercise both relay modes.
       </p>
 
-      <h2>Webhook checks</h2>
+      <h2>Connectivity checks</h2>
+      <p>
+        Confirm you can reach the instance at all before checking GitHub's own webhook delivery:
+      </p>
       <CodeBlock
         lang="bash"
         code={`curl https://reviews.example.com/health
 curl https://reviews.example.com/ready`}
       />
       <p>
+        <code>reviews.example.com</code> here stands in for whatever you're checking from — the{" "}
+        <code>caddy</code> profile's domain, an existing reverse proxy, or (if you're on the same
+        tailnet) a Tailscale instance's tailnet address on port 8787. This only confirms{" "}
+        <em>you</em> can reach the instance, not that <em>GitHub</em> can — a Tailscale-only
+        instance in push mode will pass this check and still never receive a real webhook, since
+        GitHub itself cannot reach a private tailnet address (see the callout above on{" "}
+        <code>PUBLIC_API_ORIGIN</code>).
+      </p>
+      <p>
         After installing the App on a test repo, open a small PR and confirm the webhook delivery
-        appears in GitHub and a job appears in self-host logs. Continue with{" "}
+        appears in GitHub and a job appears in self-host logs — this is the check that actually
+        proves GitHub can reach you. Continue with{" "}
         <Link to="/docs/self-hosting-operations">Operations</Link> for log and metric checks.
       </p>
     </DocsPage>
