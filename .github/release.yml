@@ -1,0 +1,32 @@
+# Categorization for GitHub's auto-generated release notes on orb-v<semver> tags. The release-orb
+# workflow (.github/workflows/release-selfhost.yml) calls the "Generate release notes content" API
+# with this repo's default branch as context, which groups merged PRs since the previous orb-v tag
+# into the categories below by label. `gittensor:feature` and `gittensor:bug` are applied
+# automatically by gittensory's own review engine on every merged PR, so this works without any
+# separate manual-labeling process.
+#
+# `exclude.authors` matches the exact GitHub API login, which for a bot account includes the `[bot]`
+# suffix (confirmed against this repo's own PR history: dependabot's login is literally
+# `dependabot[bot]`, not `dependabot`) -- excludes `dependabot[bot]`/`renovate[bot]` (routine dependency
+# version bumps) and `github-actions[bot]` (no PRs here currently, but automation-authored chore/release
+# PRs are the same operator-facing noise if that ever changes) so none of the three clutter an
+# operator-facing image changelog. Deliberately does NOT exclude `sentry[bot]` (Seer-authored fixes for
+# real production errors, e.g. #3305, get a normal `gittensor:bug` label and are exactly the kind of
+# change this changelog exists to surface) or `gittensory-orb[bot]` (the review engine's own rare, real
+# content changes, e.g. #3397).
+changelog:
+  exclude:
+    authors:
+      - dependabot[bot]
+      - renovate[bot]
+      - github-actions[bot]
+  categories:
+    - title: 🚀 Features
+      labels:
+        - "gittensor:feature"
+    - title: 🐛 Fixes
+      labels:
+        - "gittensor:bug"
+    - title: 🧹 Other Changes
+      labels:
+        - "*"
