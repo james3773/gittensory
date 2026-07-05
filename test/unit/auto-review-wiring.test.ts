@@ -37,6 +37,30 @@ describe("review.auto_review wiring (#1954)", () => {
     ).toBe("review skipped (ignored author)");
   });
 
+  it("resolvePullRequestAutoReviewSkipReason: skips when a configured label is present (#2062)", () => {
+    const manifest = parseFocusManifest({ review: { auto_review: { skip_labels: ["wip", "do-not-review"] } } });
+    expect(
+      resolvePullRequestAutoReviewSkipReason({
+        manifest,
+        isDraft: false,
+        author: "alice",
+        title: "feat: add widget",
+        baseRef: "main",
+        labels: ["WIP"],
+      }),
+    ).toBe("review skipped (configured label)");
+    expect(
+      resolvePullRequestAutoReviewSkipReason({
+        manifest,
+        isDraft: false,
+        author: "alice",
+        title: "feat: add widget",
+        baseRef: "main",
+        labels: ["feature"],
+      }),
+    ).toBeNull();
+  });
+
   it("auditPullRequestAutoReviewSkip records the skip reason and is fail-safe on audit errors", async () => {
     const auditSpy = vi.spyOn(repositoriesModule, "recordAuditEvent").mockResolvedValue(undefined);
     await auditPullRequestAutoReviewSkip({} as Env, {

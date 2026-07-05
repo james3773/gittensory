@@ -6327,7 +6327,7 @@ export async function resolveAutoReviewSkipForPullRequest(
     isFrozenForManualReview: boolean;
     forceAiReview?: boolean | undefined;
     repoFullName: string;
-    pr: { isDraft?: boolean | null; title: string; baseRef?: string | null; number: number };
+    pr: { isDraft?: boolean | null; title: string; baseRef?: string | null; number: number; labels?: readonly string[] | undefined };
     author: string | null;
     deliveryId: string;
     headSha: string | null | undefined;
@@ -6346,6 +6346,7 @@ export async function resolveAutoReviewSkipForPullRequest(
     title: args.pr.title,
     baseRef: args.pr.baseRef ?? null,
     reviewedCommitCount,
+    labels: args.pr.labels,
   });
   if (skipReason) {
     await auditPullRequestAutoReviewSkip(env, {
@@ -7367,6 +7368,8 @@ async function maybePublishPrPublicSurface(
   const reviewEligibility = decideReviewEligibility({
     authorLogin: author,
     ignoreAuthors: autoReviewConfig.ignoreAuthors,
+    skipLabels: autoReviewConfig.skipLabels,
+    prLabels: pr.labels,
   });
   if (!reviewEligibility.eligible) {
     await auditPrVisibilitySkip(
@@ -7378,12 +7381,16 @@ async function maybePublishPrPublicSurface(
       webhook.deliveryId,
     );
     if (gateEnabled) {
+      const skippedGateSummary =
+        reviewEligibility.skipReason === "skip_label"
+          ? `Review skipped: ${reviewEligibility.matchedPattern} label present.`
+          : "Review skipped: ignored author.";
       const gateCheckResult = await createOrUpdateSkippedGateCheckRun(
         env,
         installationId,
         repoFullName,
         advisory,
-        "Review skipped: ignored author.",
+        skippedGateSummary,
         mode,
       );
       /* v8 ignore next -- permission-missing audit behavior mirrors the existing skipped-check path above. */
@@ -8124,7 +8131,7 @@ async function maybePublishPrPublicSurface(
       isFrozenForManualReview,
       forceAiReview: webhook.forceAiReview,
       repoFullName,
-      pr: { number: pr.number, title: pr.title, baseRef: pr.baseRef ?? null, isDraft: pr.isDraft ?? null },
+      pr: { number: pr.number, title: pr.title, baseRef: pr.baseRef ?? null, isDraft: pr.isDraft ?? null, labels: pr.labels },
       author,
       deliveryId: webhook.deliveryId,
       headSha: advisory.headSha ?? null,

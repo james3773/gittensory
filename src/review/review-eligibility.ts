@@ -1,10 +1,12 @@
 import { matchesManifestPath } from "../signals/focus-manifest";
 
-export type ReviewEligibilitySkipReason = "ignored_author";
+export type ReviewEligibilitySkipReason = "ignored_author" | "skip_label";
 
 export type ReviewEligibilityInput = {
   authorLogin?: string | null | undefined;
   ignoreAuthors?: readonly string[] | null | undefined;
+  skipLabels?: readonly string[] | null | undefined;
+  prLabels?: readonly string[] | null | undefined;
 };
 
 export type ReviewEligibilityDecision =
@@ -35,17 +37,33 @@ function normalizeAuthorLogin(login: string | null | undefined): string {
  */
 export function decideReviewEligibility(input: ReviewEligibilityInput): ReviewEligibilityDecision {
   const author = normalizeAuthorLogin(input.authorLogin);
-  if (!author) return REVIEW_ELIGIBLE;
+  if (author) {
+    for (const pattern of input.ignoreAuthors ?? []) {
+      const trimmed = pattern.trim();
+      if (!trimmed) continue;
+      if (matchesManifestPath(author, trimmed)) {
+        return {
+          eligible: false,
+          skipReason: "ignored_author",
+          matchedPattern: trimmed,
+        };
+      }
+    }
+  }
 
-  for (const pattern of input.ignoreAuthors ?? []) {
-    const trimmed = pattern.trim();
-    if (!trimmed) continue;
-    if (matchesManifestPath(author, trimmed)) {
-      return {
-        eligible: false,
-        skipReason: "ignored_author",
-        matchedPattern: trimmed,
-      };
+  for (const configured of input.skipLabels ?? []) {
+    const configuredLabel = configured.trim();
+    if (!configuredLabel) continue;
+    const configuredLower = configuredLabel.toLowerCase();
+    for (const prLabel of input.prLabels ?? []) {
+      const prLabelLower = (prLabel ?? "").trim().toLowerCase();
+      if (prLabelLower && prLabelLower === configuredLower) {
+        return {
+          eligible: false,
+          skipReason: "skip_label",
+          matchedPattern: configuredLabel,
+        };
+      }
     }
   }
 

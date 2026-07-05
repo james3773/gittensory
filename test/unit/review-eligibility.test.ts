@@ -104,6 +104,39 @@ describe("decideReviewEligibility", () => {
       matchedPattern: null,
     });
   });
+
+  it("skips when a configured label matches case-insensitively (#2062)", () => {
+    expect(decideReviewEligibility({ skipLabels: ["wip"], prLabels: ["WIP"] })).toEqual({
+      eligible: false,
+      skipReason: "skip_label",
+      matchedPattern: "wip",
+    });
+    expect(decideReviewEligibility({ skipLabels: ["do-not-review"], prLabels: ["feature", "Do-Not-Review"] })).toEqual({
+      eligible: false,
+      skipReason: "skip_label",
+      matchedPattern: "do-not-review",
+    });
+    expect(decideReviewEligibility({ skipLabels: ["wip"], prLabels: ["feature"] })).toEqual({
+      eligible: true,
+      skipReason: null,
+      matchedPattern: null,
+    });
+    expect(decideReviewEligibility({ skipLabels: [], prLabels: ["wip"] })).toEqual({
+      eligible: true,
+      skipReason: null,
+      matchedPattern: null,
+    });
+    expect(decideReviewEligibility({ skipLabels: ["wip"], prLabels: [] })).toEqual({
+      eligible: true,
+      skipReason: null,
+      matchedPattern: null,
+    });
+    expect(decideReviewEligibility({ skipLabels: ["wip"], prLabels: null })).toEqual({
+      eligible: true,
+      skipReason: null,
+      matchedPattern: null,
+    });
+  });
 });
 
 describe("review eligibility glob matrix", () => {
