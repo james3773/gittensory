@@ -59,6 +59,15 @@ describe("review.auto_review wiring (#1954)", () => {
         labels: ["feature"],
       }),
     ).toBeNull();
+    expect(
+      resolvePullRequestAutoReviewSkipReason({
+        manifest,
+        isDraft: false,
+        author: "alice",
+        title: "feat: add widget",
+        baseRef: "main",
+      }),
+    ).toBeNull();
   });
 
   it("auditPullRequestAutoReviewSkip records the skip reason and is fail-safe on audit errors", async () => {

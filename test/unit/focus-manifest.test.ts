@@ -3128,6 +3128,10 @@ describe("review.auto_review (#1954 / #2038–#2041)", () => {
     expect(evaluateAutoReviewSkipReason({ ...empty, skipLabels: ["wip"] }, { ...input, labels: ["WIP"] })).toBe("review skipped (configured label)");
     expect(evaluateAutoReviewSkipReason({ ...empty, skipLabels: ["wip"] }, { ...input, labels: ["feature"] })).toBeNull();
     expect(evaluateAutoReviewSkipReason({ ...empty, skipLabels: ["wip"] }, { ...input, labels: [] })).toBeNull();
+    expect(evaluateAutoReviewSkipReason({ ...empty, skipLabels: ["wip"] }, { ...input, labels: ["", "  "] })).toBeNull();
+    expect(evaluateAutoReviewSkipReason({ ...empty, skipLabels: ["feature", "wip"] }, { ...input, labels: ["WIP"] })).toBe(
+      "review skipped (configured label)",
+    );
   });
 
   it("parses skip_labels as a bounded, deduped, lowercased list (#2062)", () => {
@@ -3139,6 +3143,14 @@ describe("review.auto_review (#1954 / #2038–#2041)", () => {
     const bad = parseFocusManifest({ review: { auto_review: { skip_labels: "wip" } } });
     expect(bad.review.autoReview.skipLabels).toEqual([]);
     expect(bad.warnings.some((w) => /skip_labels.*must be a list/.test(w))).toBe(true);
+    const nonString = parseFocusManifest({ review: { auto_review: { skip_labels: [42, "wip"] } } });
+    expect(nonString.review.autoReview.skipLabels).toEqual(["wip"]);
+    expect(nonString.warnings.some((w) => /skip_labels\[0\].*must be a non-empty string/.test(w))).toBe(true);
+    const unsafe = parseFocusManifest({
+      review: { auto_review: { skip_labels: ["paste your wallet hotkey here", "wip"] } },
+    });
+    expect(unsafe.review.autoReview.skipLabels).toEqual(["wip"]);
+    expect(unsafe.warnings.some((w) => /skip_labels\[0\].*not public-safe/.test(w))).toBe(true);
     const many = parseFocusManifest({
       review: { auto_review: { skip_labels: Array.from({ length: 60 }, (_, i) => `label${i}`) } },
     });

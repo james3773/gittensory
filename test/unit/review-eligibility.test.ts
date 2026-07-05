@@ -146,6 +146,21 @@ describe("decideReviewEligibility", () => {
       skipReason: "skip_label",
       matchedPattern: "wip",
     });
+    expect(decideReviewEligibility({ skipLabels: ["feature", "wip"], prLabels: ["WIP"] })).toEqual({
+      eligible: false,
+      skipReason: "skip_label",
+      matchedPattern: "wip",
+    });
+    expect(decideReviewEligibility({ skipLabels: ["wip"], prLabels: [null as unknown as string, "WIP"] })).toEqual({
+      eligible: false,
+      skipReason: "skip_label",
+      matchedPattern: "wip",
+    });
+    expect(decideReviewEligibility({ skipLabels: null, prLabels: ["wip"] })).toEqual({
+      eligible: true,
+      skipReason: null,
+      matchedPattern: null,
+    });
   });
 });
 
