@@ -156,21 +156,23 @@ export function resolveCodexEffort(configured: string | undefined): string {
 // a completed gate check, the regate-repair sweep (queue/processors.ts's surfaceRepairPriorityPullNumbers) treats
 // it as an outage and bypasses its own staleness throttle to retry it every ~2 minutes, indefinitely. Giving
 // `medium` its own tier (rather than reusing `low`'s) lets a normal medium-effort review actually finish instead
-// of feeding that loop.
-const EFFORT_TIMEOUT_MS: Record<string, number> = { low: 120_000, medium: 180_000, high: 240_000, xhigh: 360_000, max: 600_000 };
+// of feeding that loop (#3747). Split per-provider (rather than one shared map) so a future provider-specific
+// tuning change doesn't have to touch the other provider's ladder to make it.
+const CLAUDE_EFFORT_TIMEOUT_MS: Record<string, number> = { low: 120_000, medium: 180_000, high: 240_000, xhigh: 360_000, max: 600_000 };
+const CODEX_EFFORT_TIMEOUT_MS: Record<string, number> = { low: 120_000, medium: 180_000, high: 240_000, xhigh: 360_000, max: 600_000 };
 
-function resolveCliTimeoutFrom(configured: string | undefined, effort: string): number {
+function resolveCliTimeoutFrom(configured: string | undefined, effort: string, effortTimeoutMs: Record<string, number>): number {
   const raw = Number(configured);
   if (Number.isFinite(raw) && raw > 0) return Math.min(1_800_000, Math.max(30_000, raw));
-  return EFFORT_TIMEOUT_MS[effort]!;
+  return effortTimeoutMs[effort]!;
 }
 
 export function resolveClaudeCliTimeoutMs(env: Record<string, string | undefined>): number {
-  return resolveCliTimeoutFrom(firstConfigured(env.CLAUDE_AI_TIMEOUT_MS), resolveEffort(firstConfigured(env.CLAUDE_AI_EFFORT)));
+  return resolveCliTimeoutFrom(firstConfigured(env.CLAUDE_AI_TIMEOUT_MS), resolveEffort(firstConfigured(env.CLAUDE_AI_EFFORT)), CLAUDE_EFFORT_TIMEOUT_MS);
 }
 
 export function resolveCodexCliTimeoutMs(env: Record<string, string | undefined>): number {
-  return resolveCliTimeoutFrom(firstConfigured(env.CODEX_AI_TIMEOUT_MS), resolveCodexEffort(firstConfigured(env.CODEX_AI_EFFORT)));
+  return resolveCliTimeoutFrom(firstConfigured(env.CODEX_AI_TIMEOUT_MS), resolveCodexEffort(firstConfigured(env.CODEX_AI_EFFORT)), CODEX_EFFORT_TIMEOUT_MS);
 }
 
 // Fast-fail deadline for Codex's "Reading prompt from stdin..." hang (GITTENSORY-K/GITTENSORY-M): observed in prod
