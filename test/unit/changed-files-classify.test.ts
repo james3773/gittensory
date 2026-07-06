@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { classifyChangedFile } from "../../src/review/changed-files-classify";
+import { classifyChangedFile, isDocsOnlyChangedPaths } from "../../src/review/changed-files-classify";
 import { isConfigFile, isDocsFile, isGeneratedFile, isLockfile, isMinifiedFile, isVendoredFile } from "../../src/signals/path-matchers";
 import { isTestFile } from "../../src/signals/local-branch";
 
@@ -42,5 +42,15 @@ describe("classifyChangedFile (#2143)", () => {
 
   it("unknown → source (the 5-bucket set has no 'other')", () => {
     expect(classifyChangedFile("assets/logo.bin")).toBe("source");
+  });
+});
+
+describe("isDocsOnlyChangedPaths (#2063)", () => {
+  it("returns true only when every non-empty path is docs", () => {
+    expect(isDocsOnlyChangedPaths(["docs/guide.md", "README.md"])).toBe(true);
+    expect(isDocsOnlyChangedPaths(["docs/guide.md", "src/app.ts"])).toBe(false);
+    expect(isDocsOnlyChangedPaths([])).toBe(false);
+    expect(isDocsOnlyChangedPaths(["", "   "])).toBe(false);
+    expect(isDocsOnlyChangedPaths(["README.md", ""])).toBe(true);
   });
 });

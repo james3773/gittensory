@@ -3290,6 +3290,57 @@ describe("queue processors", () => {
       expect(audit?.detail).toBe("review skipped (label)");
     });
 
+    it("skips AI review when review.auto_review.skip_docs_only matches an all-docs diff (#2063)", async () => {
+      let aiCalls = 0;
+      const env = createTestEnv({
+        GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
+        AI: { run: async () => { aiCalls += 1; return { response: JSON.stringify({ assessment: "Looks fine.", blockers: [], nits: [], suggestions: [] }) }; } } as unknown as Ai,
+        AI_SUMMARIES_ENABLED: "true",
+        AI_PUBLIC_COMMENTS_ENABLED: "true",
+        AI_DAILY_NEURON_BUDGET: "100000",
+      });
+      await seedRegateChurnRepo(env);
+      await upsertRepoFocusManifest(env, "JSONbored/gittensory", { review: { auto_review: { skip_docs_only: true } } });
+      await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", {
+        number: 79,
+        title: "Docs only",
+        state: "open",
+        draft: false,
+        user: { login: "contributor" },
+        head: { sha: "a79" },
+        labels: [],
+        body: "Closes #1",
+      } as never);
+      await upsertPullRequestDetailSyncState(env, { repoFullName: "JSONbored/gittensory", pullNumber: 79, status: "complete", reviewsSyncedAt: new Date().toISOString() });
+      await upsertPullRequestFile(env, { repoFullName: "JSONbored/gittensory", pullNumber: 79, path: "docs/guide.md", status: "modified", additions: 1, deletions: 0, changes: 1, payload: {} });
+      await upsertPullRequestFile(env, { repoFullName: "JSONbored/gittensory", pullNumber: 79, path: "README.md", status: "modified", additions: 1, deletions: 0, changes: 1, payload: {} });
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = input.toString();
+        const method = init?.method ?? "GET";
+        if (url.includes("/access_tokens")) return Response.json({ token: "fake-installation-token" });
+        if (url.includes("/pulls/79/files")) return Response.json([
+          { filename: "docs/guide.md", status: "modified", additions: 1, deletions: 0, changes: 1, patch: "@@\n+docs" },
+          { filename: "README.md", status: "modified", additions: 1, deletions: 0, changes: 1, patch: "@@\n+readme" },
+        ]);
+        if (url.endsWith("/pulls/79")) return Response.json({ number: 79, title: "Docs only", state: "open", draft: false, user: { login: "contributor" }, head: { sha: "a79" }, labels: [], body: "Closes #1", mergeable_state: "clean" });
+        if (url.includes("/commits/a79/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
+        if (url.includes("/commits/a79/status")) return Response.json({ state: "success", statuses: [] });
+        if (url.includes("/issues/79/comments")) return method === "POST" ? Response.json({ id: 79 }, { status: 201 }) : Response.json([]);
+        if (url.includes("/issues/1")) return Response.json({ number: 1, title: "Issue", state: "open", labels: [], user: { login: "reporter" } });
+        if (url.includes("/branches/")) return Response.json({ protected: false, protection: { required_status_checks: { contexts: [] } } });
+        return Response.json({});
+      });
+
+      await expect(
+        processJob(env, { type: "agent-regate-pr", deliveryId: "auto-review-skip-docs-only", repoFullName: "JSONbored/gittensory", prNumber: 79, installationId: 123 }),
+      ).resolves.toBeUndefined();
+      expect(aiCalls).toBe(0);
+      const visibilitySkip = await env.DB.prepare("select detail from audit_events where event_type = ? and target_key = ?")
+        .bind("github_app.pr_visibility_skipped", "JSONbored/gittensory#79")
+        .first<{ detail: string }>();
+      expect(visibilitySkip?.detail).toBe("docs_only");
+    });
+
     it("runs AI review with cached manifest when auto_review eligibility passes (#1954)", async () => {
       let aiCalls = 0;
       const env = createTestEnv({
@@ -13415,6 +13466,81 @@ describe("queue processors", () => {
       .first<{ detail: string; metadata_json: string }>();
     expect(visibilitySkip?.detail).toBe("ignored_author");
     expect(JSON.parse(visibilitySkip?.metadata_json ?? "{}")).toMatchObject({ deliveryId: "ignored-author-skip" });
+  });
+
+  it("publishes a skipped review check for docs-only PRs when skip_docs_only is enabled (#2063)", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    await persistRegistrySnapshot(
+      env,
+      normalizeRegistryPayload(
+        { "JSONbored/gittensory": { emission_share: 0.01, issue_discovery_share: 0 } },
+        { kind: "raw-github", url: "https://example.test" },
+        "2026-05-23T00:00:00.000Z",
+      ),
+    );
+    await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);
+    await upsertRepositorySettings(env, {
+      repoFullName: "JSONbored/gittensory",
+      commentMode: "all_prs",
+      publicSurface: "comment_only",
+      autoLabelEnabled: false,
+      checkRunMode: "off",
+      gateCheckMode: "enabled",
+      linkedIssueGateMode: "block",
+    });
+    const calls = { skippedChecks: 0, comments: 0, minerList: 0 };
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url === "https://api.gittensor.io/miners") {
+        calls.minerList += 1;
+        return Response.json([]);
+      }
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/commits/docsonly123/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
+      if (url.includes("/issues/59/comments")) {
+        calls.comments += 1;
+        return Response.json([]);
+      }
+      if (url.includes("/check-runs") && method === "POST") {
+        const body = JSON.parse(String(init?.body ?? "{}")) as { status?: string; conclusion?: string; output?: { title?: string; summary?: string } };
+        expect(body).toMatchObject({
+          status: "completed",
+          conclusion: "skipped",
+          output: {
+            title: "Gittensory Orb Review Agent skipped",
+            summary: "Review skipped: docs-only PR.",
+          },
+        });
+        calls.skippedChecks += 1;
+        return Response.json({ id: 932 }, { status: 201 });
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    await upsertRepoFocusManifest(env, "JSONbored/gittensory", {
+      gate: { linkedIssue: "block" },
+      review: { auto_review: { skip_docs_only: true } },
+    });
+    await upsertPullRequestFile(env, { repoFullName: "JSONbored/gittensory", pullNumber: 59, path: "docs/guide.md", status: "modified", additions: 1, deletions: 0, changes: 1, payload: {} });
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "docs-only-skip",
+      eventName: "pull_request",
+      payload: {
+        action: "opened",
+        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+        pull_request: { number: 59, title: "Docs update", state: "open", user: { login: "alice" }, head: { sha: "docsonly123" }, labels: [], body: "No issue link." },
+      },
+    });
+
+    expect(calls).toEqual({ skippedChecks: 1, comments: 0, minerList: 0 });
+    const visibilitySkip = await env.DB.prepare("select detail, metadata_json from audit_events where event_type = ? and target_key = ?")
+      .bind("github_app.pr_visibility_skipped", "JSONbored/gittensory#59")
+      .first<{ detail: string; metadata_json: string }>();
+    expect(visibilitySkip?.detail).toBe("docs_only");
+    expect(JSON.parse(visibilitySkip?.metadata_json ?? "{}")).toMatchObject({ deliveryId: "docs-only-skip" });
   });
 
   it("audits ignored authors without a skipped check when review checks are disabled", async () => {

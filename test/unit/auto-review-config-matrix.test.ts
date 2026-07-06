@@ -78,14 +78,18 @@ describe("evaluateAutoReviewSkipReason predicate precedence (#2071)", () => {
     isDraft: true,
     author: "dependabot[bot]",
     title: "WIP: bump deps",
+    labels: [],
     baseRef: "develop",
     reviewedCommitCount: 5,
+    changedPaths: ["docs/guide.md"],
   };
 
   const allConfigured: AutoReviewConfig = {
     skipDrafts: true,
     ignoreAuthors: ["*[bot]"],
     ignoreTitleKeywords: ["wip"],
+    skipLabels: ["hold"],
+    skipDocsOnly: true,
     baseBranches: ["main"],
     autoPauseAfterReviewedCommits: 1,
   };
@@ -136,8 +140,10 @@ describe("evaluateAutoReviewSkipReason predicate precedence (#2071)", () => {
         isDraft: false,
         author: "alice",
         title: "feat: add widget",
+        labels: [],
         baseRef: "main",
         reviewedCommitCount: 0,
+        changedPaths: [],
       },
       reason: null,
     },

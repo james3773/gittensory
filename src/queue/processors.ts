@@ -6329,7 +6329,7 @@ export async function resolveAutoReviewSkipForPullRequest(
     isFrozenForManualReview: boolean;
     forceAiReview?: boolean | undefined;
     repoFullName: string;
-    pr: { isDraft?: boolean | null; title: string; baseRef?: string | null; number: number; labels?: readonly string[] };
+    pr: { isDraft?: boolean | null; title: string; baseRef?: string | null; number: number; labels?: readonly string[]; changedPaths?: readonly string[] };
     author: string | null;
     deliveryId: string;
     headSha: string | null | undefined;
@@ -6340,6 +6340,12 @@ export async function resolveAutoReviewSkipForPullRequest(
   }
   const reviewManifest = await loadRepoFocusManifest(env, args.repoFullName).catch(() => null);
   const reviewedCommitCount = await countPublishedAiReviewHeads(env, args.repoFullName, args.pr.number).catch(() => 0);
+  const autoReviewConfig = resolveReviewAutoReviewConfig(reviewManifest);
+  let changedPaths = args.pr.changedPaths ?? [];
+  if (autoReviewConfig.skipDocsOnly === true && changedPaths.length === 0) {
+    const storedFiles = await listPullRequestFiles(env, args.repoFullName, args.pr.number).catch(() => []);
+    changedPaths = storedFiles.map((file) => file.path);
+  }
   const skipReason = resolvePullRequestAutoReviewSkipReason({
     forceAiReview: args.forceAiReview,
     manifest: reviewManifest,
@@ -6349,6 +6355,7 @@ export async function resolveAutoReviewSkipForPullRequest(
     labels: args.pr.labels ?? [],
     baseRef: args.pr.baseRef ?? null,
     reviewedCommitCount,
+    changedPaths,
   });
   if (skipReason) {
     await auditPullRequestAutoReviewSkip(env, {
@@ -7367,9 +7374,16 @@ async function maybePublishPrPublicSurface(
     return undefined;
   const reviewManifest = await loadRepoFocusManifest(env, repoFullName).catch(() => null);
   const autoReviewConfig = resolveReviewAutoReviewConfig(reviewManifest);
+  let changedPathsForEligibility = pr.changedFiles ?? [];
+  if (autoReviewConfig.skipDocsOnly === true && changedPathsForEligibility.length === 0) {
+    const storedFiles = await listPullRequestFiles(env, repoFullName, pr.number).catch(() => []);
+    changedPathsForEligibility = storedFiles.map((file) => file.path);
+  }
   const reviewEligibility = decideReviewEligibility({
     authorLogin: author,
     ignoreAuthors: autoReviewConfig.ignoreAuthors,
+    skipDocsOnly: autoReviewConfig.skipDocsOnly,
+    changedPaths: changedPathsForEligibility,
   });
   if (!reviewEligibility.eligible) {
     await auditPrVisibilitySkip(
@@ -7381,12 +7395,16 @@ async function maybePublishPrPublicSurface(
       webhook.deliveryId,
     );
     if (gateEnabled) {
+      const skippedGateSummary =
+        reviewEligibility.skipReason === "docs_only"
+          ? "Review skipped: docs-only PR."
+          : "Review skipped: ignored author.";
       const gateCheckResult = await createOrUpdateSkippedGateCheckRun(
         env,
         installationId,
         repoFullName,
         advisory,
-        "Review skipped: ignored author.",
+        skippedGateSummary,
         mode,
       );
       /* v8 ignore next -- permission-missing audit behavior mirrors the existing skipped-check path above. */
@@ -8149,7 +8167,7 @@ async function maybePublishPrPublicSurface(
       isFrozenForManualReview,
       forceAiReview: webhook.forceAiReview,
       repoFullName,
-      pr: { number: pr.number, title: pr.title, baseRef: pr.baseRef ?? null, isDraft: pr.isDraft ?? null, labels: pr.labels },
+      pr: { number: pr.number, title: pr.title, baseRef: pr.baseRef ?? null, isDraft: pr.isDraft ?? null, labels: pr.labels, changedPaths: pr.changedFiles ?? [] },
       author,
       deliveryId: webhook.deliveryId,
       headSha: advisory.headSha ?? null,

@@ -163,6 +163,38 @@ describe("review.auto_review wiring (#1954)", () => {
       }),
     ).resolves.toEqual({ skipReason: "review skipped (label)", reviewManifest: labelManifest });
 
+    const docsManifest = parseFocusManifest({ review: { auto_review: { skip_docs_only: true } } });
+    loadSpy.mockResolvedValueOnce(docsManifest);
+    await expect(
+      resolveAutoReviewSkipForPullRequest({} as Env, {
+        authorBlacklisted: false,
+        isFrozenForManualReview: false,
+        repoFullName: "acme/widgets",
+        pr: { number: 9, title: "docs", baseRef: "main", isDraft: false, labels: [], changedPaths: ["docs/guide.md"] },
+        author: "alice",
+        deliveryId: "d9",
+        headSha: "sha9",
+      }),
+    ).resolves.toEqual({ skipReason: "review skipped (docs only)", reviewManifest: docsManifest });
+
+    const filesSpy = vi.spyOn(repositoriesModule, "listPullRequestFiles").mockResolvedValue([
+      { path: "docs/guide.md" } as Awaited<ReturnType<typeof repositoriesModule.listPullRequestFiles>>[number],
+    ]);
+    loadSpy.mockResolvedValueOnce(docsManifest);
+    await expect(
+      resolveAutoReviewSkipForPullRequest({} as Env, {
+        authorBlacklisted: false,
+        isFrozenForManualReview: false,
+        repoFullName: "acme/widgets",
+        pr: { number: 10, title: "docs", baseRef: "main", isDraft: false, labels: [] },
+        author: "alice",
+        deliveryId: "d10",
+        headSha: "sha10",
+      }),
+    ).resolves.toEqual({ skipReason: "review skipped (docs only)", reviewManifest: docsManifest });
+    expect(filesSpy).toHaveBeenCalledWith(expect.anything(), "acme/widgets", 10);
+    filesSpy.mockRestore();
+
     loadSpy.mockRejectedValueOnce(new Error("manifest unavailable"));
     await expect(
       resolveAutoReviewSkipForPullRequest({} as Env, {

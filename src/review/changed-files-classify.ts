@@ -30,3 +30,10 @@ export function classifyChangedFile(path: string): ReviewFileClass {
   if (isConfigFile(path)) return "config";
   return "source";
 }
+
+/** True when every non-empty changed path classifies as docs; empty/blank lists are fail-safe eligible. (#2063) */
+export function isDocsOnlyChangedPaths(paths: readonly string[]): boolean {
+  const normalized = paths.map((path) => (path ?? "").trim()).filter(Boolean);
+  if (normalized.length === 0) return false;
+  return normalized.every((path) => classifyChangedFile(path) === "docs");
+}

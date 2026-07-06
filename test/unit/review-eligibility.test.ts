@@ -104,6 +104,51 @@ describe("decideReviewEligibility", () => {
       matchedPattern: null,
     });
   });
+
+  it("skips docs-only PRs when skip_docs_only is enabled (#2063)", () => {
+    expect(
+      decideReviewEligibility({
+        authorLogin: "alice",
+        skipDocsOnly: true,
+        changedPaths: ["docs/guide.md", "README.md"],
+      }),
+    ).toEqual({
+      eligible: false,
+      skipReason: "docs_only",
+      matchedPattern: "docs-only",
+    });
+    expect(
+      decideReviewEligibility({
+        authorLogin: "alice",
+        skipDocsOnly: true,
+        changedPaths: ["docs/guide.md", "src/app.ts"],
+      }),
+    ).toEqual({
+      eligible: true,
+      skipReason: null,
+      matchedPattern: null,
+    });
+    expect(decideReviewEligibility({ skipDocsOnly: true, changedPaths: [] })).toEqual({
+      eligible: true,
+      skipReason: null,
+      matchedPattern: null,
+    });
+    expect(decideReviewEligibility({ skipDocsOnly: true, changedPaths: null })).toEqual({
+      eligible: true,
+      skipReason: null,
+      matchedPattern: null,
+    });
+    expect(decideReviewEligibility({ skipDocsOnly: false, changedPaths: ["README.md"] })).toEqual({
+      eligible: true,
+      skipReason: null,
+      matchedPattern: null,
+    });
+    expect(decideReviewEligibility({ skipDocsOnly: null, changedPaths: ["README.md"] })).toEqual({
+      eligible: true,
+      skipReason: null,
+      matchedPattern: null,
+    });
+  });
 });
 
 describe("review eligibility glob matrix", () => {
