@@ -50,7 +50,7 @@ function advisory(over: Partial<Advisory> = {}): Advisory {
 }
 
 const pr = { number: 3, title: "Add helper", body: "Adds a helper." };
-const baseArgs = { settings: { aiReviewMode: "advisory" } as RepositorySettings, repoFullName: "acme/widgets", pr, author: "burster", confirmedContributor: true };
+const baseArgs = { mode: "live" as const, settings: { aiReviewMode: "advisory" } as RepositorySettings, repoFullName: "acme/widgets", pr, author: "burster", confirmedContributor: true };
 
 describe("isReputationEnabled", () => {
   it("is OFF for unset/false and ON for the truthy convention", () => {

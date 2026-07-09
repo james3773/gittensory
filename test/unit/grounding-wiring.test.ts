@@ -204,6 +204,7 @@ describe("review-grounding wired into the AI reviewer (flag GITTENSORY_REVIEW_GR
     };
     try {
       const result = await runAiReviewForAdvisory(env, {
+        mode: "live",
         settings: { aiReviewMode: "advisory" } as RepositorySettings,
         repoFullName: "acme/widgets",
         pr: { number: 7, title: "Add a feature", body: "Implements the thing." },
@@ -240,6 +241,7 @@ describe("review-grounding wired into the AI reviewer (flag GITTENSORY_REVIEW_GR
     };
     try {
       const result = await runAiReviewForAdvisory(env, {
+        mode: "live",
         settings: { aiReviewMode: "advisory" } as RepositorySettings,
         repoFullName: "acme/noinst",
         pr: { number: 7, title: "Add a feature", body: "x" },

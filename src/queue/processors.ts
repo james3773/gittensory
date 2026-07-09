@@ -259,6 +259,7 @@ import {
   isGlobalAgentPause,
   resolveAgentActionMode,
   resolveAgentPermissionReadiness,
+  type AgentActionMode,
 } from "../settings/agent-execution";
 import {
   ISSUE_WAKE_MAX_PRS,
@@ -6990,6 +6991,13 @@ async function resolveReviewEnrichmentGithubToken(
 export async function runAiReviewForAdvisory(
   env: Env,
   args: {
+    // The caller's already-resolved resolveRepoActionMode() result (#token-bleed-spend-gate): a "paused" repo
+    // must NEVER reach the LLM call below, full stop -- not just have its GitHub publish suppressed. Every
+    // feature-specific gate below (aiReviewMode, confirmedContributor, ...) is independent of this and was, on
+    // its own, insufficient: a fleet-wide freeze or per-repo pause with aiReviewMode still "block"/"advisory"
+    // spent real tokens for hours on frozen repos before this field existed. "dry_run" still computes (so a
+    // maintainer can validate decision logic locally); only "paused" stops spend.
+    mode: AgentActionMode;
     settings: RepositorySettings;
     advisory: Awaited<ReturnType<typeof buildPullRequestAdvisory>>;
     installationId?: number | null | undefined;
@@ -7101,6 +7109,7 @@ export async function runAiReviewForAdvisory(
     packAllowsAnyAuthorBlockingReview ||
     args.settings.aiReviewAllAuthors;
   if (
+    args.mode === "paused" ||
     args.settings.aiReviewMode === "off" ||
     !reviewableAuthor ||
     !args.advisory.headSha
@@ -7675,6 +7684,9 @@ export async function maybeAddLockfileTamperFinding(
 export async function runAiSlopForAdvisory(
   env: Env,
   args: {
+    // See runAiReviewForAdvisory's doc comment on this same field (#token-bleed-spend-gate) -- a paused repo
+    // must never reach the LLM call below, independent of settings.slopAiAdvisory.
+    mode: AgentActionMode;
     settings: RepositorySettings;
     advisory: Awaited<ReturnType<typeof buildPullRequestAdvisory>>;
     repoFullName: string;
@@ -7687,7 +7699,7 @@ export async function runAiSlopForAdvisory(
 ): Promise<void> {
   // Confirmed-contributor gate (matches runAiReviewForAdvisory): no AI spend — free OR BYOK — on a PR from
   // an unconfirmed author. The deterministic slop core still ran for everyone; only the AI layer is gated.
-  if (!args.confirmedContributor || !args.advisory.headSha) return;
+  if (args.mode === "paused" || !args.confirmedContributor || !args.advisory.headSha) return;
   try {
     // BYOK (opt-in): reuse the repo's encrypted key + aiReviewByok flag — one BYOK key serves both AI
     // features. A declared provider must match the stored key's provider, else skip BYOK (Workers-AI
@@ -7817,6 +7829,9 @@ export async function runAiSlopForAdvisory(
 export async function runLinkedIssueSatisfactionForAdvisory(
   env: Env,
   args: {
+    // See runAiReviewForAdvisory's doc comment on this same field (#token-bleed-spend-gate) -- a paused repo
+    // must never reach the LLM call below, independent of settings.linkedIssueSatisfactionGateMode.
+    mode: AgentActionMode;
     settings: RepositorySettings;
     advisory: Awaited<ReturnType<typeof buildPullRequestAdvisory>>;
     repoFullName: string;
@@ -7827,7 +7842,7 @@ export async function runLinkedIssueSatisfactionForAdvisory(
     installationId: number;
   },
 ): Promise<{ status: "addressed" | "partial" | "unaddressed"; rationale: string } | null> {
-  if (!args.confirmedContributor || !args.advisory.headSha) return null;
+  if (args.mode === "paused" || !args.confirmedContributor || !args.advisory.headSha) return null;
   const primaryIssueNumber = args.pr.linkedIssues[0];
   if (primaryIssueNumber === undefined) return null;
   try {
@@ -8235,6 +8250,9 @@ async function runSelfHostVisualVision(env: Env, system: string, user: string, i
 export async function runVisualVisionForAdvisory(
   env: Env,
   args: {
+    // See runAiReviewForAdvisory's doc comment on this same field (#token-bleed-spend-gate) -- a paused repo
+    // must never reach the vision-model call below.
+    mode: AgentActionMode;
     repoFullName: string;
     pr: { number: number };
     author: string | null;
@@ -8244,7 +8262,7 @@ export async function runVisualVisionForAdvisory(
     routes: readonly CaptureRoute[];
   },
 ): Promise<void> {
-  if (args.routes.length === 0) return;
+  if (args.mode === "paused" || args.routes.length === 0) return;
   try {
     const visionReputation = await getSubmitterReputation(env, args.repoFullName, args.author ?? undefined);
     // BYOK resolution mirrors runAiReviewForAdvisory's own (re-resolved per-caller is this codebase's
@@ -9152,6 +9170,7 @@ async function maybePublishPrPublicSurface(
       // advisory-only finding. Deliberately does NOT update slopRisk — only the deterministic core blocks.
       if (shouldRunSlopAiAdvisory(settings)) {
         await runAiSlopForAdvisory(env, {
+          mode,
           settings,
           advisory,
           repoFullName,
@@ -9170,6 +9189,7 @@ async function maybePublishPrPublicSurface(
     // to function scope above, alongside gateEvaluation, since it is consumed later outside this try block.)
     if (settings.linkedIssueSatisfactionGateMode !== "off" && pr.linkedIssues.length > 0) {
       linkedIssueSatisfaction = await runLinkedIssueSatisfactionForAdvisory(env, {
+        mode,
         settings,
         advisory,
         repoFullName,
@@ -9826,6 +9846,7 @@ async function maybePublishPrPublicSurface(
               }).catch(() => undefined);
             }
             aiReview = await runAiReviewForAdvisory(env, {
+              mode,
               settings,
               advisory,
               installationId,
@@ -10727,6 +10748,7 @@ async function maybePublishPrPublicSurface(
       // own doc comment. Deliberately independent of the capture block above (its own try/catch there) so a
       // vision failure can never affect the "Visual preview" section that block already rendered.
       await runVisualVisionForAdvisory(env, {
+        mode,
         repoFullName,
         pr,
         author,

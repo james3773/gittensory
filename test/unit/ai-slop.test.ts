@@ -385,6 +385,7 @@ describe("runAiSlopForAdvisory (processor wiring)", () => {
   it("appends a single ai_slop_advisory finding when the model flags slop", async () => {
     const adv = advisory();
     await runAiSlopForAdvisory(enabledEnv(async () => ({ response: slopJson({ band: "high" }) })), {
+      mode: "live",
       settings: noByok,
       advisory: adv,
       repoFullName: "acme/widgets",
@@ -401,7 +402,7 @@ describe("runAiSlopForAdvisory (processor wiring)", () => {
     const noSha = advisory();
     delete (noSha as Partial<Advisory>).headSha;
     const run = vi.fn();
-    await runAiSlopForAdvisory(enabledEnv(run), { settings: noByok, advisory: noSha, repoFullName: "acme/widgets", pr, author: "alice", files, deterministicBand: "low", confirmedContributor: true });
+    await runAiSlopForAdvisory(enabledEnv(run), { mode: "live", settings: noByok, advisory: noSha, repoFullName: "acme/widgets", pr, author: "alice", files, deterministicBand: "low", confirmedContributor: true });
     expect(noSha.findings).toEqual([]);
     expect(run).not.toHaveBeenCalled();
   });
@@ -409,6 +410,7 @@ describe("runAiSlopForAdvisory (processor wiring)", () => {
   it("adds nothing when the model judges the change clean", async () => {
     const adv = advisory();
     await runAiSlopForAdvisory(enabledEnv(async () => ({ response: slopJson({ band: "clean", rationale: "genuine", signals: [] }) })), {
+      mode: "live",
       settings: noByok,
       advisory: adv,
       repoFullName: "acme/widgets",
@@ -421,10 +423,18 @@ describe("runAiSlopForAdvisory (processor wiring)", () => {
     expect(adv.findings).toEqual([]);
   });
 
+  it("REGRESSION (#token-bleed-spend-gate): a paused mode never reaches the LLM call, even for a confirmed contributor", async () => {
+    const run = vi.fn(async () => ({ response: slopJson() }));
+    const adv = advisory();
+    await runAiSlopForAdvisory(enabledEnv(run), { mode: "paused", settings: noByok, advisory: adv, repoFullName: "acme/widgets", pr, author: "alice", files, deterministicBand: "high", confirmedContributor: true });
+    expect(adv.findings).toEqual([]);
+    expect(run).not.toHaveBeenCalled();
+  });
+
   it("is fail-safe: a thrown error (broken DB) yields no finding and never throws", async () => {
     const adv = advisory();
     const env = { ...enabledEnv(async () => ({ response: slopJson() })), DB: undefined } as unknown as Env;
-    await expect(runAiSlopForAdvisory(env, { settings: noByok, advisory: adv, repoFullName: "acme/widgets", pr, author: "alice", files, deterministicBand: "high", confirmedContributor: true })).resolves.toBeUndefined();
+    await expect(runAiSlopForAdvisory(env, { mode: "live", settings: noByok, advisory: adv, repoFullName: "acme/widgets", pr, author: "alice", files, deterministicBand: "high", confirmedContributor: true })).resolves.toBeUndefined();
     expect(adv.findings).toEqual([]);
   });
 
@@ -442,6 +452,7 @@ describe("runAiSlopForAdvisory (processor wiring)", () => {
     vi.stubGlobal("fetch", fetchMock);
     const adv = advisory();
     await runAiSlopForAdvisory(env, {
+      mode: "live",
       settings: { aiReviewByok: true } as RepositorySettings,
       advisory: adv,
       repoFullName: "acme/widgets",
@@ -471,6 +482,7 @@ describe("runAiSlopForAdvisory (processor wiring)", () => {
     vi.stubGlobal("fetch", fetchMock);
     const adv = advisory();
     await runAiSlopForAdvisory(env, {
+      mode: "live",
       settings: { aiReviewByok: true } as RepositorySettings,
       advisory: adv,
       repoFullName: "acme/widgets",
@@ -499,7 +511,7 @@ describe("runAiSlopForAdvisory (processor wiring)", () => {
         estimatedNeurons: 42,
       });
       const adv = advisory();
-      await runAiSlopForAdvisory(env, { settings: noByok, advisory: adv, repoFullName: "acme/widgets", pr, author: "alice", files, deterministicBand: "high", confirmedContributor: true });
+      await runAiSlopForAdvisory(env, { mode: "live", settings: noByok, advisory: adv, repoFullName: "acme/widgets", pr, author: "alice", files, deterministicBand: "high", confirmedContributor: true });
 
       expect(run).not.toHaveBeenCalled(); // no LLM call spent on the cache hit
       expect(adv.findings).toEqual([{ code: AI_SLOP_FINDING_CODE, title: "cached finding", severity: "warning", detail: "from cache" }]);
@@ -518,7 +530,7 @@ describe("runAiSlopForAdvisory (processor wiring)", () => {
       const repositoriesModule = await import("../../src/db/repositories");
       const auditSpy = vi.spyOn(repositoriesModule, "recordAuditEvent").mockRejectedValueOnce(new Error("D1 audit write error"));
       const adv = advisory();
-      await runAiSlopForAdvisory(env, { settings: noByok, advisory: adv, repoFullName: "acme/widgets", pr, author: "alice", files, deterministicBand: "high", confirmedContributor: true });
+      await runAiSlopForAdvisory(env, { mode: "live", settings: noByok, advisory: adv, repoFullName: "acme/widgets", pr, author: "alice", files, deterministicBand: "high", confirmedContributor: true });
 
       expect(run).not.toHaveBeenCalled(); // still a cache hit despite the audit-write failure
       expect(adv.findings).toEqual([{ code: AI_SLOP_FINDING_CODE, title: "cached finding", severity: "warning", detail: "from cache" }]);
@@ -533,6 +545,7 @@ describe("runAiSlopForAdvisory (processor wiring)", () => {
       const env = enabledEnv(run);
       const adv = advisory();
       await runAiSlopForAdvisory(env, {
+        mode: "live",
         settings: noByok,
         advisory: adv,
         repoFullName: "acme/widgets",
@@ -550,7 +563,7 @@ describe("runAiSlopForAdvisory (processor wiring)", () => {
       const run = vi.fn(async () => ({ response: slopJson({ band: "elevated" }) }));
       const env = enabledEnv(run);
       const adv = advisory();
-      await runAiSlopForAdvisory(env, { settings: noByok, advisory: adv, repoFullName: "acme/widgets", pr, author: "alice", files, deterministicBand: "elevated", confirmedContributor: true });
+      await runAiSlopForAdvisory(env, { mode: "live", settings: noByok, advisory: adv, repoFullName: "acme/widgets", pr, author: "alice", files, deterministicBand: "elevated", confirmedContributor: true });
       expect(run).toHaveBeenCalledTimes(1); // fresh call on the miss
 
       const fingerprint = await slopFingerprint({ deterministicBand: "elevated" });
@@ -559,7 +572,7 @@ describe("runAiSlopForAdvisory (processor wiring)", () => {
 
       // A second call for the SAME head must now reuse the cache, not spend another LLM call.
       const adv2 = advisory();
-      await runAiSlopForAdvisory(env, { settings: noByok, advisory: adv2, repoFullName: "acme/widgets", pr, author: "alice", files, deterministicBand: "elevated", confirmedContributor: true });
+      await runAiSlopForAdvisory(env, { mode: "live", settings: noByok, advisory: adv2, repoFullName: "acme/widgets", pr, author: "alice", files, deterministicBand: "elevated", confirmedContributor: true });
       expect(run).toHaveBeenCalledTimes(1); // still 1 — the second pass was a cache hit
       expect(adv2.findings).toEqual(adv.findings);
     });
@@ -568,7 +581,7 @@ describe("runAiSlopForAdvisory (processor wiring)", () => {
       const run = vi.fn(async () => ({ response: slopJson({ band: "elevated" }) }));
       const budgetedEnv = createTestEnv({ AI: { run } as unknown as Ai, AI_SUMMARIES_ENABLED: "true", AI_PUBLIC_COMMENTS_ENABLED: "true", AI_DAILY_NEURON_BUDGET: "1" });
       const adv = advisory();
-      await runAiSlopForAdvisory(budgetedEnv, { settings: noByok, advisory: adv, repoFullName: "acme/widgets", pr, author: "alice", files, deterministicBand: "elevated", confirmedContributor: true });
+      await runAiSlopForAdvisory(budgetedEnv, { mode: "live", settings: noByok, advisory: adv, repoFullName: "acme/widgets", pr, author: "alice", files, deterministicBand: "elevated", confirmedContributor: true });
       expect(run).not.toHaveBeenCalled(); // quota_exceeded short-circuits before any model call
       expect(adv.findings).toEqual([]);
 
@@ -578,7 +591,7 @@ describe("runAiSlopForAdvisory (processor wiring)", () => {
       // Same head, budget now available — must still attempt the model instead of replaying a quota miss.
       const richEnv = createTestEnv({ AI: { run } as unknown as Ai, AI_SUMMARIES_ENABLED: "true", AI_PUBLIC_COMMENTS_ENABLED: "true", AI_DAILY_NEURON_BUDGET: "100000" });
       const adv2 = advisory();
-      await runAiSlopForAdvisory(richEnv, { settings: noByok, advisory: adv2, repoFullName: "acme/widgets", pr, author: "alice", files, deterministicBand: "elevated", confirmedContributor: true });
+      await runAiSlopForAdvisory(richEnv, { mode: "live", settings: noByok, advisory: adv2, repoFullName: "acme/widgets", pr, author: "alice", files, deterministicBand: "elevated", confirmedContributor: true });
       expect(run).toHaveBeenCalledTimes(1);
     });
 
@@ -603,7 +616,7 @@ describe("runAiSlopForAdvisory (processor wiring)", () => {
       vi.stubGlobal("fetch", fetchMock);
 
       const adv = advisory();
-      await runAiSlopForAdvisory(env, { settings: { aiReviewByok: true } as RepositorySettings, advisory: adv, repoFullName: "acme/widgets", pr, author: "alice", files, deterministicBand: "elevated", confirmedContributor: true });
+      await runAiSlopForAdvisory(env, { mode: "live", settings: { aiReviewByok: true } as RepositorySettings, advisory: adv, repoFullName: "acme/widgets", pr, author: "alice", files, deterministicBand: "elevated", confirmedContributor: true });
 
       // A fresh BYOK call was made (not the stale free-tier cache row, and not Workers AI).
       expect(fetchMock).toHaveBeenCalled();
@@ -617,7 +630,7 @@ describe("runAiSlopForAdvisory (processor wiring)", () => {
       const repositoriesModule = await import("../../src/db/repositories");
       const readSpy = vi.spyOn(repositoriesModule, "getCachedAiSlopAdvisory").mockRejectedValueOnce(new Error("D1 read error"));
       const adv = advisory();
-      await runAiSlopForAdvisory(env, { settings: noByok, advisory: adv, repoFullName: "acme/widgets", pr, author: "alice", files, deterministicBand: "elevated", confirmedContributor: true });
+      await runAiSlopForAdvisory(env, { mode: "live", settings: noByok, advisory: adv, repoFullName: "acme/widgets", pr, author: "alice", files, deterministicBand: "elevated", confirmedContributor: true });
       expect(run).toHaveBeenCalledTimes(1); // degraded to a miss instead of throwing
       expect(adv.findings.map((f) => f.code)).toEqual([AI_SLOP_FINDING_CODE]);
       readSpy.mockRestore();
@@ -629,7 +642,7 @@ describe("runAiSlopForAdvisory (processor wiring)", () => {
       const repositoriesModule = await import("../../src/db/repositories");
       const writeSpy = vi.spyOn(repositoriesModule, "putCachedAiSlopAdvisory").mockRejectedValueOnce(new Error("D1 write error"));
       const adv = advisory();
-      await runAiSlopForAdvisory(env, { settings: noByok, advisory: adv, repoFullName: "acme/widgets", pr, author: "alice", files, deterministicBand: "elevated", confirmedContributor: true });
+      await runAiSlopForAdvisory(env, { mode: "live", settings: noByok, advisory: adv, repoFullName: "acme/widgets", pr, author: "alice", files, deterministicBand: "elevated", confirmedContributor: true });
       expect(adv.findings.map((f) => f.code)).toEqual([AI_SLOP_FINDING_CODE]); // swallowed, not thrown
       writeSpy.mockRestore();
 
@@ -651,7 +664,7 @@ describe("runAiSlopForAdvisory (processor wiring)", () => {
       });
       const adv = advisory();
       await expect(
-        runAiSlopForAdvisory(env, { settings: noByok, advisory: adv, repoFullName: "acme/widgets", pr, author: "alice", files, deterministicBand: "elevated", confirmedContributor: true }),
+        runAiSlopForAdvisory(env, { mode: "live", settings: noByok, advisory: adv, repoFullName: "acme/widgets", pr, author: "alice", files, deterministicBand: "elevated", confirmedContributor: true }),
       ).resolves.toBeUndefined(); // never throws, even with both the cache write AND its own audit write failing
       expect(adv.findings.map((f) => f.code)).toEqual([AI_SLOP_FINDING_CODE]);
       writeSpy.mockRestore();
