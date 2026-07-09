@@ -1276,8 +1276,9 @@ export type AgentPendingActionParams = {
   mergeMethod?: AutoMergeMethod;
   // For an `assign` action (#3182): the GitHub login to assign when a staged action is accepted.
   assignee?: string;
-  // For an `assign` action (#priority-linked-issue-gate-ownership): the linked issue numbers to ALSO assign
-  // `assignee` to when a staged action is accepted (see PlannedAgentAction.assignLinkedIssues).
+  // Legacy approval-queue rows may contain this field from the reverted linked-issue assignment fan-out. New
+  // plans do not set it, actionParams does not persist it, and the executor ignores it because linked issue
+  // assignment is an authorization signal granted by maintainers, not by PR-body closing references.
   assignLinkedIssues?: number[];
   closeComment?: string;
   // Individual close reasons, persisted for approval-queue replay so the eventual audit row keeps the structured
