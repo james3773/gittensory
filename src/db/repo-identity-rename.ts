@@ -23,9 +23,23 @@
 // types don't generalize cleanly across tables with different secondary keys, and this codebase's own
 // convention (repositories.ts) is explicit per-table queries throughout, not a shared query abstraction.
 // New tables extend this function directly, following the same shape.
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import { getDb } from "./client";
-import { auditEvents, issues, pullRequests, repositories, repositorySettings } from "./schema";
+import {
+  activeReviewTracking,
+  advisories,
+  auditEvents,
+  checkSummaries,
+  gateOutcomes,
+  issues,
+  pullRequestDetailSyncState,
+  pullRequestFiles,
+  pullRequestReviews,
+  pullRequests,
+  recentMergedPullRequests,
+  repositories,
+  repositorySettings,
+} from "./schema";
 
 function repoParts(fullName: string): { owner: string; name: string } {
   const slash = fullName.indexOf("/");
@@ -91,6 +105,133 @@ export async function renameRepositoryIdentity(env: Env, oldFullName: string, ne
       htmlUrl: sql`replace(${issues.htmlUrl}, ${oldFullName}, ${newFullName})`,
     })
     .where(eq(issues.repoFullName, oldFullName));
+
+  // gateOutcomes: unique (repo_full_name, pull_number) -- same fold-then-rename shape as pullRequests/issues.
+  const collidingGateOutcomePulls = (
+    await db.select({ pullNumber: gateOutcomes.pullNumber }).from(gateOutcomes).where(eq(gateOutcomes.repoFullName, oldFullName))
+  ).map((row) => row.pullNumber);
+  if (collidingGateOutcomePulls.length > 0) {
+    await db.delete(gateOutcomes).where(and(eq(gateOutcomes.repoFullName, newFullName), inArray(gateOutcomes.pullNumber, collidingGateOutcomePulls)));
+  }
+  await db
+    .update(gateOutcomes)
+    .set({ repoFullName: newFullName, id: sql`replace(${gateOutcomes.id}, ${oldFullName}, ${newFullName})` })
+    .where(eq(gateOutcomes.repoFullName, oldFullName));
+
+  // activeReviewTracking: unique (repo_full_name, pull_number) -- same shape.
+  const collidingActiveReviewPulls = (
+    await db.select({ pullNumber: activeReviewTracking.pullNumber }).from(activeReviewTracking).where(eq(activeReviewTracking.repoFullName, oldFullName))
+  ).map((row) => row.pullNumber);
+  if (collidingActiveReviewPulls.length > 0) {
+    await db
+      .delete(activeReviewTracking)
+      .where(and(eq(activeReviewTracking.repoFullName, newFullName), inArray(activeReviewTracking.pullNumber, collidingActiveReviewPulls)));
+  }
+  await db
+    .update(activeReviewTracking)
+    .set({ repoFullName: newFullName, id: sql`replace(${activeReviewTracking.id}, ${oldFullName}, ${newFullName})` })
+    .where(eq(activeReviewTracking.repoFullName, oldFullName));
+
+  // pullRequestDetailSyncState: unique (repo_full_name, pull_number) -- same shape.
+  const collidingSyncStatePulls = (
+    await db
+      .select({ pullNumber: pullRequestDetailSyncState.pullNumber })
+      .from(pullRequestDetailSyncState)
+      .where(eq(pullRequestDetailSyncState.repoFullName, oldFullName))
+  ).map((row) => row.pullNumber);
+  if (collidingSyncStatePulls.length > 0) {
+    await db
+      .delete(pullRequestDetailSyncState)
+      .where(and(eq(pullRequestDetailSyncState.repoFullName, newFullName), inArray(pullRequestDetailSyncState.pullNumber, collidingSyncStatePulls)));
+  }
+  await db
+    .update(pullRequestDetailSyncState)
+    .set({ repoFullName: newFullName, id: sql`replace(${pullRequestDetailSyncState.id}, ${oldFullName}, ${newFullName})` })
+    .where(eq(pullRequestDetailSyncState.repoFullName, oldFullName));
+
+  // recentMergedPullRequests: unique (repo_full_name, number) -- same shape as pullRequests.
+  const collidingRecentMergedNumbers = (
+    await db.select({ number: recentMergedPullRequests.number }).from(recentMergedPullRequests).where(eq(recentMergedPullRequests.repoFullName, oldFullName))
+  ).map((row) => row.number);
+  if (collidingRecentMergedNumbers.length > 0) {
+    await db
+      .delete(recentMergedPullRequests)
+      .where(and(eq(recentMergedPullRequests.repoFullName, newFullName), inArray(recentMergedPullRequests.number, collidingRecentMergedNumbers)));
+  }
+  await db
+    .update(recentMergedPullRequests)
+    .set({
+      repoFullName: newFullName,
+      id: sql`replace(${recentMergedPullRequests.id}, ${oldFullName}, ${newFullName})`,
+      htmlUrl: sql`replace(${recentMergedPullRequests.htmlUrl}, ${oldFullName}, ${newFullName})`,
+    })
+    .where(eq(recentMergedPullRequests.repoFullName, oldFullName));
+
+  // pullRequestFiles: unique (repo_full_name, pull_number, path) -- a 3-column key, so the collision check
+  // is per-(pullNumber, path) PAIR rather than a single-column inArray. Row counts here are small (a
+  // rename is a rare, one-time event; a PR's file list is bounded), so one scoped delete per pair is simple
+  // and dialect-portable rather than reaching for a raw composite-tuple IN clause.
+  const collidingFileKeys = await db
+    .select({ pullNumber: pullRequestFiles.pullNumber, path: pullRequestFiles.path })
+    .from(pullRequestFiles)
+    .where(eq(pullRequestFiles.repoFullName, oldFullName));
+  for (const key of collidingFileKeys) {
+    await db
+      .delete(pullRequestFiles)
+      .where(and(eq(pullRequestFiles.repoFullName, newFullName), eq(pullRequestFiles.pullNumber, key.pullNumber), eq(pullRequestFiles.path, key.path)));
+  }
+  await db
+    .update(pullRequestFiles)
+    .set({ repoFullName: newFullName, id: sql`replace(${pullRequestFiles.id}, ${oldFullName}, ${newFullName})` })
+    .where(eq(pullRequestFiles.repoFullName, oldFullName));
+
+  // checkSummaries: unique (repo_full_name, head_sha, name) -- same per-pair fold as pullRequestFiles above,
+  // but head_sha is nullable, so the collision lookup branches on isNull vs eq per row instead of a single
+  // eq() (SQL NULL never equals NULL via `=`).
+  const collidingCheckKeys = await db
+    .select({ headSha: checkSummaries.headSha, name: checkSummaries.name })
+    .from(checkSummaries)
+    .where(eq(checkSummaries.repoFullName, oldFullName));
+  for (const key of collidingCheckKeys) {
+    await db
+      .delete(checkSummaries)
+      .where(
+        and(
+          eq(checkSummaries.repoFullName, newFullName),
+          key.headSha === null ? isNull(checkSummaries.headSha) : eq(checkSummaries.headSha, key.headSha),
+          eq(checkSummaries.name, key.name),
+        ),
+      );
+  }
+  await db
+    .update(checkSummaries)
+    .set({ repoFullName: newFullName, id: sql`replace(${checkSummaries.id}, ${oldFullName}, ${newFullName})` })
+    .where(eq(checkSummaries.repoFullName, oldFullName));
+
+  // pullRequestReviews: no separate unique index (PK `id` alone) -- id is `${repoFullName}#${pullNumber}#
+  // ${githubReviewId}` (github/backfill.ts), so the fold checks for a PK collision on the id the rename
+  // would PRODUCE rather than a business-key tuple. GitHub review ids are globally unique, so this never
+  // fires in practice; kept for defensive correctness rather than assuming that invariant holds forever.
+  const oldReviewIds = (
+    await db.select({ id: pullRequestReviews.id }).from(pullRequestReviews).where(eq(pullRequestReviews.repoFullName, oldFullName))
+  ).map((row) => row.id);
+  const renamedReviewIds = oldReviewIds.map((id) => id.split(oldFullName).join(newFullName));
+  if (renamedReviewIds.length > 0) {
+    await db.delete(pullRequestReviews).where(inArray(pullRequestReviews.id, renamedReviewIds));
+  }
+  await db
+    .update(pullRequestReviews)
+    .set({ repoFullName: newFullName, id: sql`replace(${pullRequestReviews.id}, ${oldFullName}, ${newFullName})` })
+    .where(eq(pullRequestReviews.repoFullName, oldFullName));
+
+  // advisories: `id` is a random UUID (never repo-derived) and there is no unique constraint on repo
+  // columns, so this is a plain rename -- repoFullName plus the `targetKey` business identifier
+  // (`${repoFullName}#${pullNumber|issueNumber|"unknown"}`, src/rules/advisory.ts), same LIKE+replace
+  // shape as auditEvents.target_key below.
+  await db
+    .update(advisories)
+    .set({ repoFullName: newFullName, targetKey: sql`replace(${advisories.targetKey}, ${oldFullName}, ${newFullName})` })
+    .where(eq(advisories.repoFullName, oldFullName));
 
   // auditEvents.target_key: an append-only log with no uniqueness on target_key (many rows legitimately
   // share one), so a plain substring rename with no dedupe step is correct and sufficient.
