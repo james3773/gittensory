@@ -372,7 +372,7 @@ async function runIterateLoopCore(input: IterateLoopInput, deps: IterateLoopDeps
         reason: abort.reason,
       };
       safeAppendAttemptLogEvent(deps, {
-        eventType: "attempt_aborted",
+        eventType: attemptLogEventTypeForDecision(decision),
         attemptId: input.attemptId,
         actionClass: "iterate_loop",
         mode: input.mode,

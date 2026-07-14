@@ -461,4 +461,84 @@ describe("runMinerAttempt — real self-plagiarism wiring into the chokepoint (#
     expect(result.loopResult.finalDecision.abandonReason).toBe("kill_switch_engaged");
     expect(executeLocalWrite).not.toHaveBeenCalled();
   });
+
+  it("treats boolean shouldAbort true as kill_switch_engaged with the default reason (#5670)", async () => {
+    const driver = vi.fn(async () => okDriverResult());
+    const result = await runMinerAttempt(
+      baseAttemptInput(),
+      baseDeps({
+        driver: { run: driver },
+        shouldAbort: () => true,
+      }),
+    );
+    expect(result.outcome).toBe("abandon");
+    expect(result.loopResult.finalDecision.abandonReason).toBe("kill_switch_engaged");
+    expect(result.loopResult.finalDecision.reason).toMatch(/Kill-switch engaged mid-attempt/);
+    expect(driver).not.toHaveBeenCalled();
+  });
+
+  it("uses the default reason when shouldAbort returns { abort: true } without a reason (#5670)", async () => {
+    const driver = vi.fn(async () => okDriverResult());
+    const result = await runMinerAttempt(
+      baseAttemptInput(),
+      baseDeps({
+        driver: { run: driver },
+        shouldAbort: () => ({ abort: true }),
+      }),
+    );
+    expect(result.outcome).toBe("abandon");
+    expect(result.loopResult.finalDecision.abandonReason).toBe("kill_switch_engaged");
+    expect(result.loopResult.finalDecision.reason).toMatch(/Kill-switch engaged mid-attempt/);
+    expect(driver).not.toHaveBeenCalled();
+  });
+
+  it("ignores a non-aborting shouldAbort object and continues the attempt (#5670)", async () => {
+    const executeLocalWrite = vi.fn(async () => ({ ranAt: 10_000 }));
+    const result = await runMinerAttempt(
+      baseAttemptInput(),
+      baseDeps({
+        shouldAbort: () => ({ abort: false }),
+        executeLocalWrite,
+      }),
+    );
+    // Handoff proceeds into the real post-loop gates (not abandoned for kill).
+    expect(result.outcome).not.toBe("abandon");
+  });
+
+  it("treats boolean shouldAbort false as a no-op and continues (#5670)", async () => {
+    const result = await runMinerAttempt(
+      baseAttemptInput(),
+      baseDeps({
+        shouldAbort: () => false,
+      }),
+    );
+    expect(result.outcome).not.toBe("abandon");
+  });
+
+  it("uses the default reason when shouldAbort supplies a whitespace-only reason (#5670)", async () => {
+    const driver = vi.fn(async () => okDriverResult());
+    const result = await runMinerAttempt(
+      baseAttemptInput(),
+      baseDeps({
+        driver: { run: driver },
+        shouldAbort: () => ({ abort: true, reason: "   " }),
+      }),
+    );
+    expect(result.outcome).toBe("abandon");
+    expect(result.loopResult.finalDecision.reason).toMatch(/Kill-switch engaged mid-attempt/);
+    expect(driver).not.toHaveBeenCalled();
+  });
+
+  it("continues past the post-handoff kill re-check when live scope is none (#5670)", async () => {
+    const executeLocalWrite = vi.fn(async () => ({ ranAt: 10_000 }));
+    const result = await runMinerAttempt(
+      baseAttemptInput({ killSwitchScope: "none" }),
+      baseDeps({
+        resolveKillSwitchScope: () => "none",
+        executeLocalWrite,
+      }),
+    );
+    expect(result.outcome).not.toBe("abandon");
+    expect(executeLocalWrite).toHaveBeenCalled();
+  });
 });

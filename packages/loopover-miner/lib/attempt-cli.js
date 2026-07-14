@@ -388,6 +388,7 @@ export async function runAttempt(args, options = {}) {
     const repoPaused = minerGoalSpec.spec.killSwitch.paused;
 
     const checkKillSwitch = options.checkMinerKillSwitch ?? checkMinerKillSwitch;
+    const recordKillTransition = options.recordMinerKillSwitchTransition ?? recordMinerKillSwitchTransition;
     let killSwitchScope = checkKillSwitch({ env, repoPaused }).scope;
     let previousKillSwitchScope = killSwitchScope;
 
@@ -397,7 +398,7 @@ export async function runAttempt(args, options = {}) {
       const live = checkKillSwitch({ env, repoPaused: liveRepoPaused });
       if (live.scope !== previousKillSwitchScope) {
         try {
-          recordMinerKillSwitchTransition({
+          recordKillTransition({
             repoFullName: parsed.repoFullName,
             actionClass: "attempt",
             previousScope: previousKillSwitchScope,
