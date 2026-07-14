@@ -676,6 +676,45 @@ chokepoint's returned ledger event feeds.
 The vocabulary is fixed (`allowed`, `denied`, `throttled`, `kill_switch`) and unknown event types fail closed. This
 module defines the storage contract only — it does not wire into live governor enforcement yet. (#2328)
 
+## Tenant quota
+
+`evaluateTenantQuota(usage, quota)` (`tenant-quota.ts`) is the pure per-tenant resource-quota evaluator for
+Rent-a-Loop hosting: given a tenant's metered `TenantUsage` and its allocated `TenantQuota`, it decides
+whether the tenant may run more work and, if not, which dimension is exhausted and why. Like the governor
+modules above it is decision-only — it does not store usage, meter compute, or stop a loop; that enforcement
+wiring is separate and maintainer-owned.
+
+- `TenantQuota` — the allocation ceilings: `computeUnits`, `wallClockMs`, `maxConcurrentLoops`.
+- `TenantUsage` — the tenant's metered consumption: `computeUnitsUsed`, `wallClockMsUsed`, `activeLoops`.
+- `QuotaDimension` — `"compute" | "time" | "concurrency"`.
+- `TenantQuotaDecision` — `{ allowed, exceeded, reason, remaining }`, where `exceeded` is the first exhausted
+  `QuotaDimension` (or `null`), `reason` is a user-facing message (or `null` when allowed), and `remaining` is
+  the per-dimension headroom (`computeUnits` / `wallClockMs` / `concurrentLoops`, never negative).
+
+Dimensions are checked in a fixed precedence — compute, then time, then concurrency — and the FIRST exhausted
+one is reported, so the tenant gets a single actionable message. A dimension counts as exhausted at `>=` its
+cap (a tenant that has consumed its whole allocation is stopped, not allowed one more over the line), and every
+input is normalized to a non-negative integer so a non-finite or negative value can never make a decision
+`NaN`, fractional, or negative. It reads only the given tenant's numbers, so one tenant hitting quota never
+affects another's decision.
+
+```ts
+import { evaluateTenantQuota } from "@loopover/engine";
+
+const quota = { computeUnits: 1000, wallClockMs: 3_600_000, maxConcurrentLoops: 3 };
+
+// Within quota -> allowed
+evaluateTenantQuota({ computeUnitsUsed: 200, wallClockMsUsed: 60_000, activeLoops: 1 }, quota);
+// { allowed: true, exceeded: null, reason: null,
+//   remaining: { computeUnits: 800, wallClockMs: 3_540_000, concurrentLoops: 2 } }
+
+// Compute exhausted -> blocked (compute is reported first, ahead of time and concurrency)
+evaluateTenantQuota({ computeUnitsUsed: 1000, wallClockMsUsed: 60_000, activeLoops: 1 }, quota);
+// { allowed: false, exceeded: "compute",
+//   reason: "Quota exceeded: you have used all 1000 compute units in your current allocation. Increase your allocation or wait for the next period before running more.",
+//   remaining: { computeUnits: 0, wallClockMs: 3_540_000, concurrentLoops: 2 } }
+```
+
 ## MinerGoalSpec
 
 `MinerGoalSpec` is the type surface for a repo's `.loopover-miner.yml` (miner-side analogue of `.loopover.yml`).
@@ -709,6 +748,92 @@ package is IO-free) — `packages/loopover-miner/lib/ams-policy.js`'s `resolveAm
 That resolver reads only the operator's local policy and otherwise uses safe defaults; it intentionally does not
 fetch a target repo's checked-in AMS policy, because untrusted repo content must not loosen operator-side budget,
 turn, slop, or submission controls. See `.loopover-ams.yml.example`.
+
+## Rent-a-Loop pipeline
+
+The customer-facing spine of Rent-a-Loop (epic #4778) is three pure, side-effect-free modules — idea → running
+loop → delivered result. Like the rest of this package they do no IO, network, wall-clock, or random reads: each
+is a deterministic transform of already-computed inputs.
+
+### `idea-intake.ts` — idea → scored, claimable task-graph
+
+Turns a freeform renter idea into a strict task-graph and dispositions it against the shared feasibility gate.
+`validateIdeaSubmission(raw)` returns a discriminated `IdeaValidationResult` (`{ ok: true, idea }` or
+`{ ok: false, errors }`), length-capping the freeform text (`IDEA_TITLE_MAX_CHARS` / `IDEA_BODY_MAX_CHARS` /
+`IDEA_CONSTRAINT_MAX_CHARS`). `buildTaskGraph(idea, drafts?)` decomposes an accepted `IdeaSubmission` into a
+`TaskGraph` of `ConstituentIssue`s (`gittensor:priority` is never emitted — it is maintainer-propagated only).
+`scoreTaskGraph(graph)` runs the feasibility gate over every issue (`TaskGraphScore`), and `buildClaimPlan(graph,
+targetRepo)` routes the scored graph into a `ClaimPlan` — `go` → `claimable`, `raise` → `deferred`, `avoid` →
+`skipped` — in dependency-respecting order.
+
+```ts
+import { validateIdeaSubmission, buildTaskGraph, scoreTaskGraph, buildClaimPlan } from "@loopover/engine";
+
+const result = validateIdeaSubmission({
+  id: "idea-1",
+  title: "Add CSV export to the reports page",
+  body: "Users want to download the reports table as CSV so they can pivot it in a spreadsheet.",
+  targetRepo: "acme/reports",
+  priority: "high",
+});
+if (result.ok) {
+  const graph = buildTaskGraph(result.idea);
+  scoreTaskGraph(graph); // { verdict: "go", perIssue: [{ key: "issue-1", verdict: "go", reasons: [] }] }
+  buildClaimPlan(graph, "acme/reports");
+  // { ideaId: "idea-1", targetRepo: "acme/reports", graphVerdict: "go",
+  //   claimable: [{ key: "issue-1", title: "Add CSV export to the reports page", targetRepo: "acme/reports", verdict: "go", reasons: [] }],
+  //   deferred: [], skipped: [] }
+}
+```
+
+### `loop-progress.ts` — running loop → customer progress snapshot
+
+`buildProgressSnapshot(state)` turns already-computed `LoopProgressState` into a `ProgressSnapshot` — the
+`LoopPhase` (`queued` → … → `done`), `LoopRunStatus`, iteration budget as `percentComplete` (or `null` when the
+budget is unknown), a `recentActivity` tail capped at `MAX_PROGRESS_ACTIVITY`, and a `done` flag. `progressChanged(prev,
+next)` decides when a snapshot changed enough to push, so the surface streams on change instead of polling (a `null`
+`prev` — the first snapshot — always pushes).
+
+```ts
+import { buildProgressSnapshot, progressChanged } from "@loopover/engine";
+
+const snapshot = buildProgressSnapshot({
+  iteration: 2,
+  maxIterations: 5,
+  phase: "coding",
+  status: "running",
+  recentActivity: [{ step: "claiming" }, { step: "coding", detail: "editing reports.tsx" }],
+});
+// { phase: "coding", status: "running", iteration: 2, maxIterations: 5, percentComplete: 40,
+//   recentActivity: [{ step: "claiming" }, { step: "coding", detail: "editing reports.tsx" }], done: false }
+progressChanged(null, snapshot); // true (first snapshot always pushes)
+```
+
+### `results-payload.ts` — completed iteration → customer result
+
+`buildResultsPayload(result)` packages a finished `IterationResult` into a customer-facing `ResultsPayload`: the
+canonical `prLink` (or `null` when no PR was opened), one plain-language `summary` sentence, a `diffPreview` bounded
+to `MAX_DIFF_PREVIEW_FILES` files (while `totals` still reflects the full change), and the `totals` roll-up. It
+formats already-fetched metadata only — it does not open, fetch, or deliver anything.
+
+```ts
+import { buildResultsPayload } from "@loopover/engine";
+
+buildResultsPayload({
+  repoFullName: "acme/reports",
+  prNumber: 128,
+  title: "Add CSV export",
+  changedFiles: [
+    { path: "src/reports.tsx", additions: 40, deletions: 3 },
+    { path: "src/csv.ts", additions: 22, deletions: 0 },
+  ],
+  status: "open",
+});
+// { prLink: "https://github.com/acme/reports/pull/128",
+//   summary: "Opened PR #128 in acme/reports: Add CSV export. 2 files changed (+62 / -3). Status: open.",
+//   diffPreview: [{ path: "src/reports.tsx", additions: 40, deletions: 3 }, { path: "src/csv.ts", additions: 22, deletions: 0 }],
+//   totals: { files: 2, additions: 62, deletions: 3 } }
+```
 
 ## Repo map builder
 

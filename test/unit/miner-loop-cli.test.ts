@@ -810,4 +810,245 @@ describe("runLoop (#5135)", () => {
     });
     for (const spy of jsonCloseSpies) expect(spy).toHaveBeenCalledTimes(1);
   });
+
+  it("halts immediately when an attempt returns kill_switch_engaged mid-run (#5670)", async () => {
+    const { eventLedger, governorLedger, portfolioQueue, runState, governorState, paths } = tempStores();
+    portfolioQueue.enqueue({ repoFullName: "acme/widgets", identifier: "issue:7" });
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    let killActive = false;
+    const runAttemptSpy = vi.fn(async (_args: string[], options?: Record<string, unknown>) => {
+      killActive = true;
+      const onResult = options?.onResult;
+      if (typeof onResult === "function") {
+        onResult({
+          outcome: "attempt_abandon",
+          abandonReason: "kill_switch_engaged",
+          totalTurnsUsed: 1,
+          totalCostUsd: 0,
+        });
+      }
+      return 0;
+    });
+
+    const exitCode = await runLoop(["acme/widgets", "--miner-login", "alice", "--json", "--max-cycles", "3"], {
+      openGovernorState: () => governorState,
+      initEventLedger: () => eventLedger,
+      initGovernorLedger: () => governorLedger,
+      initPortfolioQueue: () => portfolioQueue,
+      initRunStateStore: () => runState,
+      runDiscover: async () => 0,
+      runAttempt: runAttemptSpy,
+      ...readyLoopOptions({
+        checkMinerKillSwitch: () =>
+          killActive ? { scope: "global" as const, active: true } : { scope: "none" as const, active: false },
+      }),
+    });
+
+    expect(exitCode).toBe(0);
+    expect(runAttemptSpy).toHaveBeenCalledTimes(1);
+    const printed = JSON.parse(String(log.mock.calls[0]?.[0]));
+    expect(printed.haltReason).toBe("kill_switch_global");
+    expect(printed.cycles.at(-1)).toMatchObject({
+      outcome: "halted",
+      reason: "kill_switch_global",
+      identifier: "issue:7",
+      attemptOutcome: "attempt_abandon",
+    });
+    // Claim released back to queued via markFailed — reopen after runLoop closes its handles.
+    const reopened = initPortfolioQueueStore(paths.portfolioQueuePath);
+    expect(reopened.listQueue()[0]).toMatchObject({ identifier: "issue:7", status: "queued" });
+    reopened.close();
+  });
+
+  it("halts with kill_switch_engaged when mid-attempt abandon is reported but live kill cleared (#5670)", async () => {
+    const { eventLedger, governorLedger, portfolioQueue, runState, governorState } = tempStores();
+    portfolioQueue.enqueue({ repoFullName: "acme/widgets", identifier: "issue:7" });
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const runAttemptSpy = vi.fn(async (_args: string[], options?: Record<string, unknown>) => {
+      const onResult = options?.onResult;
+      if (typeof onResult === "function") {
+        onResult({
+          outcome: "attempt_abandon",
+          abandonReason: "kill_switch_engaged",
+          totalTurnsUsed: 1,
+          totalCostUsd: 0,
+        });
+      }
+      return 0;
+    });
+
+    const exitCode = await runLoop(["acme/widgets", "--miner-login", "alice", "--json", "--max-cycles", "3"], {
+      openGovernorState: () => governorState,
+      initEventLedger: () => eventLedger,
+      initGovernorLedger: () => governorLedger,
+      initPortfolioQueue: () => portfolioQueue,
+      initRunStateStore: () => runState,
+      runDiscover: async () => 0,
+      runAttempt: runAttemptSpy,
+      ...readyLoopOptions({
+        checkMinerKillSwitch: () => ({ scope: "none" as const, active: false }),
+      }),
+    });
+
+    expect(exitCode).toBe(0);
+    const printed = JSON.parse(String(log.mock.calls[0]?.[0]));
+    expect(printed.haltReason).toBe("kill_switch_engaged");
+    expect(printed.cycles.at(-1)).toMatchObject({
+      outcome: "halted",
+      reason: "kill_switch_engaged",
+      identifier: "issue:7",
+    });
+  });
+
+  it("releases an in-flight claim when kill trips at the top of a later cycle (#5670)", async () => {
+    const { eventLedger, governorLedger, portfolioQueue, runState, governorState, paths } = tempStores();
+    portfolioQueue.enqueue({ repoFullName: "acme/widgets", identifier: "issue:7" });
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    let killChecks = 0;
+    const runAttemptSpy = vi.fn(async (_args: string[], options?: Record<string, unknown>) => {
+      const onResult = options?.onResult;
+      if (typeof onResult === "function") {
+        onResult({
+          outcome: "attempt_abandon",
+          totalTurnsUsed: 1,
+          totalCostUsd: 0,
+        });
+      }
+      return 0;
+    });
+
+    const exitCode = await runLoop(["acme/widgets", "--miner-login", "alice", "--json", "--max-cycles", "3"], {
+      openGovernorState: () => governorState,
+      initEventLedger: () => eventLedger,
+      initGovernorLedger: () => governorLedger,
+      initPortfolioQueue: () => portfolioQueue,
+      initRunStateStore: () => runState,
+      runDiscover: async () => 0,
+      runAttempt: runAttemptSpy,
+      ...readyLoopOptions({
+        checkMinerKillSwitch: () => {
+          killChecks += 1;
+          // Initial check inactive (discovery + first attempt). Second cycle's top-of-loop probe trips.
+          // Sequence: initial, cycle1 top, (after attempt + requeue) cycle2 top.
+          return killChecks >= 3
+            ? { scope: "repo" as const, active: true }
+            : { scope: "none" as const, active: false };
+        },
+      }),
+    });
+
+    expect(exitCode).toBe(0);
+    expect(runAttemptSpy).toHaveBeenCalledTimes(1);
+    const printed = JSON.parse(String(log.mock.calls[0]?.[0]));
+    expect(printed.haltReason).toBe("kill_switch_repo");
+    expect(printed.cycles.at(-1)).toMatchObject({
+      outcome: "halted",
+      reason: "kill_switch_repo",
+      identifier: "issue:7",
+    });
+    const reopened = initPortfolioQueueStore(paths.portfolioQueuePath);
+    expect(reopened.listQueue()[0]).toMatchObject({ identifier: "issue:7", status: "queued" });
+    reopened.close();
+  });
+
+  it("releases an in-flight claim when pause trips at the top of a later cycle (#5670)", async () => {
+    const { eventLedger, governorLedger, portfolioQueue, runState, governorState, paths } = tempStores();
+    portfolioQueue.enqueue({ repoFullName: "acme/widgets", identifier: "issue:7" });
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const loadPauseState = vi
+      .fn()
+      .mockReturnValueOnce({ paused: false, reason: null, pausedAt: null }) // initial pre-loop
+      .mockReturnValueOnce({ paused: false, reason: null, pausedAt: null }) // cycle 1 top
+      .mockReturnValue({ paused: true, reason: "stop after attempt", pausedAt: "2026-07-14T00:00:00.000Z" });
+    const runAttemptSpy = vi.fn(async (_args: string[], options?: Record<string, unknown>) => {
+      const onResult = options?.onResult;
+      if (typeof onResult === "function") {
+        onResult({ outcome: "attempt_abandon", totalTurnsUsed: 1, totalCostUsd: 0 });
+      }
+      return 0;
+    });
+
+    const exitCode = await runLoop(["acme/widgets", "--miner-login", "alice", "--json", "--max-cycles", "3"], {
+      openGovernorState: () => ({ ...governorState, loadPauseState }),
+      initEventLedger: () => eventLedger,
+      initGovernorLedger: () => governorLedger,
+      initPortfolioQueue: () => portfolioQueue,
+      initRunStateStore: () => runState,
+      runDiscover: async () => 0,
+      runAttempt: runAttemptSpy,
+      ...readyLoopOptions(),
+    });
+
+    expect(exitCode).toBe(0);
+    expect(runAttemptSpy).toHaveBeenCalledTimes(1);
+    const printed = JSON.parse(String(log.mock.calls[0]?.[0]));
+    expect(printed.haltReason).toBe("paused");
+    expect(printed.cycles.at(-1)).toMatchObject({
+      outcome: "halted",
+      reason: "paused",
+      identifier: "issue:7",
+    });
+    const reopened = initPortfolioQueueStore(paths.portfolioQueuePath);
+    expect(reopened.listQueue()[0]).toMatchObject({ identifier: "issue:7", status: "queued" });
+    reopened.close();
+  });
+
+  it("halts on kill mid-loop without a claim and omits claim fields (#5670)", async () => {
+    const { eventLedger, governorLedger, portfolioQueue, runState, governorState } = tempStores();
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    let killChecks = 0;
+
+    const exitCode = await runLoop(["acme/widgets", "--miner-login", "alice", "--json", "--max-cycles", "2"], {
+      openGovernorState: () => governorState,
+      initEventLedger: () => eventLedger,
+      initGovernorLedger: () => governorLedger,
+      initPortfolioQueue: () => portfolioQueue,
+      initRunStateStore: () => runState,
+      runDiscover: async () => 0,
+      runAttempt: vi.fn(),
+      ...readyLoopOptions({
+        checkMinerKillSwitch: () => {
+          killChecks += 1;
+          // Initial inactive (discovery). Empty queue → claimed null → top-of-loop kill.
+          return killChecks === 1
+            ? { scope: "none" as const, active: false }
+            : { scope: "global" as const, active: true };
+        },
+      }),
+    });
+
+    expect(exitCode).toBe(0);
+    const printed = JSON.parse(String(log.mock.calls[0]?.[0]));
+    expect(printed.haltReason).toBe("kill_switch_global");
+    expect(printed.cycles.at(-1)).toEqual({
+      cycle: 1,
+      outcome: "halted",
+      reason: "kill_switch_global",
+    });
+  });
+
+  it("halts on pause mid-loop without a claim and omits claim fields (#5670)", async () => {
+    const { eventLedger, governorLedger, portfolioQueue, runState, governorState } = tempStores();
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const loadPauseState = vi
+      .fn()
+      .mockReturnValueOnce({ paused: false, reason: null, pausedAt: null })
+      .mockReturnValue({ paused: true, reason: "empty-queue stop", pausedAt: "2026-07-14T00:00:00.000Z" });
+
+    const exitCode = await runLoop(["acme/widgets", "--miner-login", "alice", "--json", "--max-cycles", "2"], {
+      openGovernorState: () => ({ ...governorState, loadPauseState }),
+      initEventLedger: () => eventLedger,
+      initGovernorLedger: () => governorLedger,
+      initPortfolioQueue: () => portfolioQueue,
+      initRunStateStore: () => runState,
+      runDiscover: async () => 0,
+      runAttempt: vi.fn(),
+      ...readyLoopOptions(),
+    });
+
+    expect(exitCode).toBe(0);
+    const printed = JSON.parse(String(log.mock.calls[0]?.[0]));
+    expect(printed.haltReason).toBe("paused");
+    expect(printed.cycles.at(-1)).toEqual({ cycle: 1, outcome: "halted", reason: "paused" });
+  });
 });

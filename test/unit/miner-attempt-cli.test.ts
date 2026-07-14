@@ -1450,4 +1450,100 @@ describe("runAttempt: real claim-ledger wiring (#5393)", () => {
 
     expect(claimIssueSpy).not.toHaveBeenCalled();
   });
+
+  it("wires live shouldAbort + resolveKillSwitchScope and surfaces abandonReason (#5670)", async () => {
+    const { allocator, claimLedger, eventLedger, attemptLog, governorLedger } = tempLedgers();
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    let killChecks = 0;
+    const checkMinerKillSwitchSpy = vi.fn(() => {
+      killChecks += 1;
+      // First resolve seeds previousScope=none; later live probes trip global.
+      if (killChecks === 1) return { scope: "none" as const, active: false };
+      return { scope: "global" as const, active: true };
+    });
+    const recordTransitionSpy = vi.fn();
+    const runMinerAttemptSpy = vi.fn(async (_input: unknown, deps: {
+      shouldAbort?: () => boolean | { abort: boolean; reason?: string };
+      resolveKillSwitchScope?: () => string;
+    }) => {
+      expect(deps.shouldAbort?.()).toEqual({
+        abort: true,
+        reason: expect.stringContaining("Kill-switch (global)"),
+      });
+      expect(deps.resolveKillSwitchScope?.()).toBe("global");
+      return {
+        outcome: "abandon",
+        loopResult: fakeLoopResult({
+          outcome: "abandon",
+          finalDecision: {
+            action: "abandon",
+            abandonReason: "kill_switch_engaged",
+            reason: "Kill-switch (global) engaged mid-attempt; abandoning without starting another driver iteration.",
+          },
+        }),
+      };
+    });
+
+    const exitCode = await runAttempt(["acme/widgets", "7", "--miner-login", "alice", "--json"], {
+      env: { MINER_CODING_AGENT_PROVIDER: "noop" },
+      openWorktreeAllocator: () => allocator,
+      openClaimLedger: () => claimLedger,
+      initEventLedger: () => eventLedger,
+      initAttemptLog: () => attemptLog,
+      initGovernorLedger: () => governorLedger,
+      ...readyPipelineOptions({
+        checkMinerKillSwitch: checkMinerKillSwitchSpy,
+        recordMinerKillSwitchTransition: recordTransitionSpy,
+        runMinerAttempt: runMinerAttemptSpy,
+      }),
+    });
+
+    expect(exitCode).toBe(7);
+    expect(runMinerAttemptSpy).toHaveBeenCalledTimes(1);
+    expect(recordTransitionSpy).toHaveBeenCalledWith({
+      repoFullName: "acme/widgets",
+      actionClass: "attempt",
+      previousScope: "none",
+      scope: "global",
+    });
+    expect(JSON.parse(String(log.mock.calls[0]?.[0])).abandonReason).toBe("kill_switch_engaged");
+  });
+
+  it("shouldAbort stays false while kill is inactive, and a broken transition never crashes (#5670)", async () => {
+    const { allocator, claimLedger, eventLedger, attemptLog, governorLedger } = tempLedgers();
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    let killChecks = 0;
+    const checkMinerKillSwitchSpy = vi.fn(() => {
+      killChecks += 1;
+      if (killChecks === 1) return { scope: "none" as const, active: false };
+      // Scope changes (triggers transition) but stays inactive so shouldAbort returns false.
+      return { scope: "repo" as const, active: false };
+    });
+    const recordTransitionSpy = vi.fn(() => {
+      throw new Error("ledger unavailable");
+    });
+    const runMinerAttemptSpy = vi.fn(async (_input: unknown, deps: {
+      shouldAbort?: () => boolean | { abort: boolean; reason?: string };
+    }) => {
+      expect(deps.shouldAbort?.()).toBe(false);
+      return { outcome: "abandon", loopResult: fakeLoopResult() };
+    });
+
+    const exitCode = await runAttempt(["acme/widgets", "7", "--miner-login", "alice", "--json"], {
+      env: { MINER_CODING_AGENT_PROVIDER: "noop" },
+      openWorktreeAllocator: () => allocator,
+      openClaimLedger: () => claimLedger,
+      initEventLedger: () => eventLedger,
+      initAttemptLog: () => attemptLog,
+      initGovernorLedger: () => governorLedger,
+      ...readyPipelineOptions({
+        checkMinerKillSwitch: checkMinerKillSwitchSpy,
+        recordMinerKillSwitchTransition: recordTransitionSpy,
+        runMinerAttempt: runMinerAttemptSpy,
+      }),
+    });
+
+    expect(exitCode).toBe(7);
+    expect(recordTransitionSpy).toHaveBeenCalledTimes(1);
+  });
 });

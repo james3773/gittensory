@@ -68,7 +68,10 @@ export function evaluateLocalRateLimit(
 
   const allowed = effectiveCount < limit;
   const remaining = allowed ? limit - effectiveCount - 1 : 0;
-  const retryAfterMs = allowed ? 0 : Math.max(0, resetAtMs - now);
+  // Clamp to at most one window (#5829): `windowElapsed` only detects a FORWARD clock, so if `now` steps BACKWARD
+  // relative to `windowStartMs` (an NTP correction or container/VM clock reset) `resetAtMs - now` grows by the jump
+  // distance on top of `windowMs` — a rolling-window limiter must never report a wait longer than its own window.
+  const retryAfterMs = allowed ? 0 : Math.min(windowMs, Math.max(0, resetAtMs - now));
 
   return { allowed, limit, remaining, resetAtMs, retryAfterMs };
 }

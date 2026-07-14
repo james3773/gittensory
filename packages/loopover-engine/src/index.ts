@@ -263,6 +263,7 @@ export {
 export {
   runIterateLoop,
   type IterateLoopDeps,
+  type IterateLoopShouldAbort,
   type IterateLoopInput,
   type IterateLoopIterationRecord,
   type IterateLoopOutcome,
@@ -600,6 +601,19 @@ export {
   type TenantQuotaDecision,
   type TenantUsage,
 } from "./tenant-quota.js";
+export {
+  DEFAULT_TENANT_CONFIG,
+  EMPTY_TENANT_CONFIG_STORE,
+  getTenantConfig,
+  resolveTenantConfig,
+  setTenantConfig,
+  TENANT_AUTONOMY_LEVELS,
+  type TenantAutonomyLevel,
+  type TenantConfig,
+  type TenantConfigOverrides,
+  type TenantConfigStore,
+  type TenantExecutionPreferences,
+} from "./tenant-config.js";
 export {
   buildProgressSnapshot,
   progressChanged,
