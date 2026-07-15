@@ -24,14 +24,15 @@ Two products, self-host-first:
   requires a fresh gap-audit (read the current `packages/loopover-miner`/`-engine` code against what
   Wave 4 already covered — coverage gate, ledger races, MCP scaffolding — and find what's still
   genuinely thin), not relabeling existing issues.
-- **Unified AMS+ORB self-host harness** — letting one operator install/run both products together in
-  one system, to "close the loop" as both maintainer and contributor. Searched exhaustively
-  (2026-07-14): no existing issue, open or closed, covers this — not verbatim, not conceptually. The
-  closest real thread is #4878-#4884 (extracting ORB's core review logic into `gittensory-engine`,
-  the same package AMS's miner logic already lives in) — that's the actual prerequisite plumbing, not
-  the harness itself. This needs fresh scoping: read the current self-host `docker-compose.yml`
-  (already supports optional profiles — `ollama`, `observability`, `postgres`, `rees`, etc.) and design
-  how an AMS-miner profile/service could sit alongside it, then file a real epic + sub-issues.
+- **Unified AMS+ORB self-host harness** — now scoped and issue-backed as of 2026-07-15, don't
+  re-discover it as unscoped in a future run. #5996 covers the combined ORB+AMS quickstart doc itself.
+  A broader 2026-07-15 audit of every `.md` file in the repo found AMS's operator-facing docs
+  (`packages/loopover-miner/DEPLOYMENT.md` + 10 files under `docs/`) exist only as raw markdown, never
+  ported to the real docs website (`apps/loopover-ui/src/routes/docs.*.tsx`) the way ORB's
+  self-hosting docs already are — filed as epic #6012 (milestone `ORB - Long Term Features &
+  Improvements`, not its own milestone — see the milestone-discipline note above) with one sub-issue
+  per source file. Check #6012's sub-issue completion state before assuming this work still needs
+  scoping from scratch.
 
 ## Milestone taxonomy (as of 2026-07-14 — re-check before trusting, this moves fast)
 
@@ -45,8 +46,13 @@ Two products, self-host-first:
 | `LoopOver Rebrand Migration (maintainer)` | Brand/infra cutover | No |
 | Unmilestoned | Orphans | Usually fine to fold into the closest-fitting existing milestone above rather than leave adrift |
 
-**Don't invent a new milestone reflexively.** Only create one when a new body of work genuinely
-doesn't fit any existing bucket (the unified-harness epic, once scoped, likely needs its own).
+**Don't invent a new milestone reflexively — confirmed the hard way, 2026-07-15.** When scoping the
+unified AMS+ORB harness epic (#6012) into an 11-issue docs-porting body of work, a new milestone was
+created for it; the maintainer immediately reverted this and folded the epic into the existing
+`ORB - Long Term Features & Improvements` grab-bag instead. Treat "this genuinely doesn't fit any
+existing bucket" as a much higher bar than it sounds — even an epic-sized new initiative should
+default to the closest existing milestone unless explicitly told otherwise. If a new milestone still
+seems warranted, propose it and wait for confirmation rather than creating it unilaterally.
 
 ## What's safe to unleash — the actual test
 
@@ -70,6 +76,38 @@ A concrete engineering task is safe to hand to a contributor when:
 
 When genuinely unsure, default to `maintainer-only` — a wrongly-locked issue costs one manual unlock
 later; a wrongly-unlocked one costs a contributor's wasted PR and possibly a bad precedent.
+
+## The gate only enforces what the issue explicitly says — never rely on implied intent
+
+**Confirmed by the maintainer, 2026-07-15:** the loopover-orb review agent (the gate) checks a PR
+against whatever the linked issue **explicitly** states as fulfillment requirements. It does not
+infer intent from narrative Context, from "obviously implied" scope, or from this skill's own
+general conventions — none of that is visible to the gate at review time. Only the issue's own text
+is.
+
+**What this broke once already:** issue #5996 (a combined ORB+AMS self-host doc) explained in
+Context that public-facing docs live on the website, not as repo markdown, and had one Requirements
+bullet saying so. A contributor's PR (#6011, filed *after* that bullet was added) still added a new
+root-level `.md` file plus edited three other markdown files as its "fix" — a plausible-looking wrong
+interpretation the gate had nothing more explicit to check against, since the constraint wasn't
+phrased as an unambiguous, standalone rule.
+
+**How to apply, every time a deliverable's file type/path/format actually matters (not just docs —
+also applies to "this must be a native GraphQL mutation not a markdown checklist," "this must reuse
+the existing X pattern not invent a new one," etc.):**
+- State the hard constraint as its own callout or leading Requirements bullet, not folded into
+  prose Context.
+- Name the exact file path/pattern the deliverable must match.
+- Name the exact anti-patterns that do **not** satisfy the issue even if superficially on-topic (e.g.
+  "adding a new `.md` file anywhere in the repo, including the root," "editing README.md to add this
+  content instead of creating the route file").
+- For anything doc-shaped, use language close to: `> ⚠️ Read this before starting. The deliverable
+  is a website page at <exact path>. It is not a markdown file. A PR that adds/edits any .md file as
+  the fix does NOT resolve this issue and will be closed.` — see #5996 or any of #6012's sub-issues
+  for the exact wording already proven out.
+- Assume the issue text is the *only* thing an AI-harness-driven contributor's agent will read before
+  acting — don't assume it will also read this skill file, the repo's CLAUDE.md, or common sense
+  about the file type.
 
 ## Labels
 
