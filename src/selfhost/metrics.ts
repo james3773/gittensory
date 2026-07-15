@@ -134,6 +134,7 @@ export const DEFAULT_METRIC_META: readonly (readonly [string, MetricMeta])[] = [
   ["loopover_agent_disposition_total", { help: "Final agent disposition per PR pass (merge/close/hold), by repo, action class, blocker-code class, and autonomy level.", type: "counter" }],
   ["loopover_merge_train_deferred_total", { help: "Merge-train FIFO gate deferrals (an older still-viable sibling held a merge), by repo and mode (audit/enforce).", type: "counter" }],
   ["loopover_reviews_published_total", { help: "Published review comments.", type: "counter" }],
+  ["loopover_review_end_to_end_latency_seconds", { help: "Real end-to-end review latency in seconds, from the PR's current head SHA becoming ready for review (open + non-draft) to this pass's comment publish -- distinct from a single queue job's own claim-to-completion latency_ms, this spans every queueing/deferral wait in between.", type: "histogram" }],
   ["loopover_github_branch_protection_permission_denied_total", { help: "GitHub branch-protection reads denied by permissions.", type: "counter" }],
   ["loopover_github_pull_request_files_fetch_total", { help: "GitHub pull-request file fetch attempts.", type: "counter" }],
   ["loopover_pr_state_cache_total", { help: "Pull-request state cache outcomes.", type: "counter" }],
@@ -218,6 +219,11 @@ function publicLabelsForMetric(name: string, labels?: Labels): Labels | undefine
 // Request-latency buckets in seconds (Prometheus convention). Covers sub-ms health checks through
 // multi-second webhook processing. Callers may pass their own buckets to observe().
 export const DEFAULT_BUCKETS = [0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10];
+
+// End-to-end review-latency buckets in seconds, minute-scale (unlike DEFAULT_BUCKETS' sub-10s request-latency
+// range) -- covers the 1-5 minute target through well past the ~15-20 minute latency this metric exists to
+// diagnose, with headroom for real outliers (deferred-to-CI-completion passes, backlog convergence).
+export const REVIEW_LATENCY_BUCKETS = [10, 30, 60, 120, 180, 300, 600, 900, 1200, 1800, 3600, 7200];
 
 function seriesKey(name: string, labels?: Labels): string {
   if (!labels || Object.keys(labels).length === 0) return name;

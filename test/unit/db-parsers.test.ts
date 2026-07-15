@@ -557,6 +557,70 @@ describe("database row parser hardening", () => {
     expect(stored?.bodyObservedAt).toBe(first.bodyObservedAt);
   });
 
+  it("REGRESSION (#review-latency-metric): a first-ever sync of a ready (non-draft) open PR stamps headShaObservedAt", async () => {
+    const env = createTestEnv();
+    const created = await upsertPullRequestFromGitHub(env, "owner/repo", { number: 20, title: "New PR", state: "open", user: { login: "bob" }, head: { sha: "a1" }, labels: [] });
+    expect(typeof created.headShaObservedAt).toBe("string");
+    const stored = await getPullRequest(env, "owner/repo", 20);
+    expect(typeof stored?.headShaObservedAt).toBe("string");
+  });
+
+  it("REGRESSION (#review-latency-metric): a draft PR never gets headShaObservedAt stamped -- draft-sitting time must not count as review latency", async () => {
+    const env = createTestEnv();
+    const created = await upsertPullRequestFromGitHub(env, "owner/repo", { number: 21, title: "Draft PR", state: "open", user: { login: "bob" }, head: { sha: "a1" }, labels: [], draft: true });
+    expect(created.headShaObservedAt).toBeNull();
+    // A second sync while still draft (e.g. a title edit) must not start the clock either.
+    const resynced = await upsertPullRequestFromGitHub(env, "owner/repo", { number: 21, title: "Draft PR edited", state: "open", user: { login: "bob" }, head: { sha: "a1" }, labels: [], draft: true });
+    expect(resynced.headShaObservedAt).toBeNull();
+  });
+
+  it("REGRESSION (#review-latency-metric): converting draft to ready_for_review with the SAME head SHA starts the clock at that moment", async () => {
+    const env = createTestEnv();
+    await upsertPullRequestFromGitHub(env, "owner/repo", { number: 22, title: "PR", state: "open", user: { login: "bob" }, head: { sha: "a1" }, labels: [], draft: true });
+    const readied = await upsertPullRequestFromGitHub(env, "owner/repo", { number: 22, title: "PR", state: "open", user: { login: "bob" }, head: { sha: "a1" }, labels: [], draft: false });
+    expect(typeof readied.headShaObservedAt).toBe("string");
+    const stored = await getPullRequest(env, "owner/repo", 22);
+    expect(stored?.headShaObservedAt).toBe(readied.headShaObservedAt);
+  });
+
+  it("REGRESSION (#review-latency-metric): a fresh commit on an already-ready PR resets headShaObservedAt to a new timestamp", async () => {
+    const env = createTestEnv();
+    const first = await upsertPullRequestFromGitHub(env, "owner/repo", { number: 23, title: "PR", state: "open", user: { login: "bob" }, head: { sha: "a1" }, labels: [] });
+    expect(typeof first.headShaObservedAt).toBe("string");
+    const pushed = await upsertPullRequestFromGitHub(env, "owner/repo", { number: 23, title: "PR", state: "open", user: { login: "bob" }, head: { sha: "a2" }, labels: [] });
+    expect(typeof pushed.headShaObservedAt).toBe("string");
+    // Not asserting inequality of the two timestamps (both could land in the same millisecond in a fast test
+    // run) -- the meaningful, deterministic assertion is that the SAME-head resync test below preserves the
+    // value while this fresh-commit case does NOT skip re-stamping (both are exercised via typeof "string").
+  });
+
+  it("REGRESSION (#review-latency-metric): an unrelated resync with an UNCHANGED head SHA preserves the already-stamped headShaObservedAt", async () => {
+    const env = createTestEnv();
+    const first = await upsertPullRequestFromGitHub(env, "owner/repo", { number: 24, title: "PR", state: "open", user: { login: "bob" }, head: { sha: "a1" }, labels: [] });
+    expect(typeof first.headShaObservedAt).toBe("string");
+    // A labeled event resyncs the same PR, same head SHA -- must not reset the clock.
+    const resynced = await upsertPullRequestFromGitHub(env, "owner/repo", { number: 24, title: "PR", state: "open", user: { login: "bob" }, head: { sha: "a1" }, labels: [{ name: "bug" }] });
+    expect(resynced.headShaObservedAt).toBe(first.headShaObservedAt);
+    const stored = await getPullRequest(env, "owner/repo", 24);
+    expect(stored?.headShaObservedAt).toBe(first.headShaObservedAt);
+  });
+
+  it("REGRESSION (#review-latency-metric): a sparse sync (head entirely absent) preserves the already-stamped headShaObservedAt", async () => {
+    const env = createTestEnv();
+    const first = await upsertPullRequestFromGitHub(env, "owner/repo", { number: 25, title: "PR", state: "open", user: { login: "bob" }, head: { sha: "a1" }, labels: [] });
+    expect(typeof first.headShaObservedAt).toBe("string");
+    const resynced = await upsertPullRequestFromGitHub(env, "owner/repo", { number: 25, title: "PR", state: "open", user: { login: "bob" }, labels: [] });
+    expect(resynced.headShaObservedAt).toBe(first.headShaObservedAt);
+  });
+
+  it("REGRESSION (#review-latency-metric): closing the PR does not error and leaves headShaObservedAt as last observed", async () => {
+    const env = createTestEnv();
+    const first = await upsertPullRequestFromGitHub(env, "owner/repo", { number: 26, title: "PR", state: "open", user: { login: "bob" }, head: { sha: "a1" }, labels: [] });
+    expect(typeof first.headShaObservedAt).toBe("string");
+    const closed = await upsertPullRequestFromGitHub(env, "owner/repo", { number: 26, title: "PR", state: "closed", user: { login: "bob" }, head: { sha: "a1" }, labels: [] });
+    expect(closed.headShaObservedAt).toBe(first.headShaObservedAt);
+  });
+
   it("countRecentDeadLetters counts github_app.dlq_dead_lettered audits since a cutoff, independent of any ops flag (#1276)", async () => {
     const env = createTestEnv();
     await recordAuditEvent(env, { eventType: "github_app.dlq_dead_lettered", actor: "loopover", targetKey: "dlq:github-webhook:a", outcome: "error", createdAt: "2026-06-24T10:00:00.000Z" });

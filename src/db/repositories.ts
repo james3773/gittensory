@@ -354,6 +354,8 @@ export async function upsertPullRequestFromGitHub(
       linkedIssueClaimedAt: pullRequests.linkedIssueClaimedAt,
       payloadJson: pullRequests.payloadJson,
       bodyObservedAt: pullRequests.bodyObservedAt,
+      headSha: pullRequests.headSha,
+      headShaObservedAt: pullRequests.headShaObservedAt,
     })
     .from(pullRequests)
     .where(and(eq(pullRequests.repoFullName, repoFullName), eq(pullRequests.number, pr.number)))
@@ -385,6 +387,21 @@ export async function upsertPullRequestFromGitHub(
   // trustworthy going forward; a sparse payload (pr.body === undefined) proves nothing either way and must not
   // start the clock. Set once, keep forever (#linked-issue-sparse-first-upsert).
   const bodyObservedAt = existingClaimRow?.bodyObservedAt ?? (pr.body !== undefined ? syncedAt : null);
+  // Real end-to-end review-latency clock (#review-latency-metric): starts the instant this exact commit
+  // becomes ready for review (open + non-draft), resets on every new commit, and is deliberately left unset
+  // while draft -- draft-sitting time is author-controlled wait, not loopover's own pipeline latency. A
+  // headSha change (including the PR's first-ever sync) always restarts the clock; an unchanged headSha keeps
+  // whatever was already stored (including null, which self-heals the instant the PR leaves draft or gets a
+  // fresh commit -- no backfill migration needed, mirrors bodyObservedAt's own non-backfill philosophy).
+  const isReadyForReview = pr.state === "open" && !(pr.draft ?? pr.isDraft ?? false);
+  const incomingHeadSha = pr.head?.sha;
+  const headShaChanged = incomingHeadSha !== undefined && incomingHeadSha !== existingClaimRow?.headSha;
+  const headShaObservedAt =
+    !isReadyForReview || incomingHeadSha === undefined
+      ? (existingClaimRow?.headShaObservedAt ?? null)
+      : headShaChanged || !existingClaimRow?.headShaObservedAt
+        ? syncedAt
+        : existingClaimRow.headShaObservedAt;
   await db
     .insert(pullRequests)
     .values({
@@ -404,6 +421,7 @@ export async function upsertPullRequestFromGitHub(
       linkedIssuesJson,
       linkedIssueClaimedAt,
       bodyObservedAt,
+      headShaObservedAt,
       lastSeenOpenAt,
       payloadJson: jsonString(payload),
       updatedAt: syncedAt,
@@ -424,12 +442,13 @@ export async function upsertPullRequestFromGitHub(
         linkedIssuesJson,
         linkedIssueClaimedAt,
         bodyObservedAt,
+        headShaObservedAt,
         lastSeenOpenAt,
         payloadJson: jsonString(payload),
         updatedAt: syncedAt,
       },
     });
-  return { ...record, body, linkedIssues, linkedIssueClaimedAt, bodyObservedAt };
+  return { ...record, body, linkedIssues, linkedIssueClaimedAt, bodyObservedAt, headShaObservedAt };
 }
 
 function resolveLinkedIssueClaimedAt(
@@ -6282,6 +6301,7 @@ function toPullRequestRecordFromRow(row: typeof pullRequests.$inferSelect): Pull
     closedAt: payload.closed_at,
     linkedIssueClaimedAt: row.linkedIssueClaimedAt,
     bodyObservedAt: row.bodyObservedAt,
+    headShaObservedAt: row.headShaObservedAt,
     labels: parseJson<string[]>(row.labelsJson, []),
     linkedIssues: parseJson<number[]>(row.linkedIssuesJson, []),
     slopRisk: row.slopRisk,

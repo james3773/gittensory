@@ -541,6 +541,11 @@ export type PullRequestRecord = {
    *  upsert). `null`/absent means no real body has ever been synced yet — callers enforcing a linked-issue
    *  requirement must treat that as unverified, never as "confirmed no linked issue". Set once, never cleared. */
   bodyObservedAt?: string | null | undefined;
+  /** The moment this PR's CURRENT head SHA first became ready for review: set on open (or a fresh commit while
+   *  open+non-draft), reset on every new commit, left unset while the PR is a draft (draft-sitting time must
+   *  not count toward review latency). Feeds `loopover_review_end_to_end_latency_seconds` — a real
+   *  PR-ready-to-review-published span, distinct from the queue's own per-job `latency_ms`. */
+  headShaObservedAt?: string | null | undefined;
   labels: string[];
   linkedIssues: number[];
   /** Latest deterministic slop assessment (0-100) and band, persisted by the public-surface processor when

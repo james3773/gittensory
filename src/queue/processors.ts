@@ -462,7 +462,7 @@ import {
   parseVisualVisionResponse,
   VISUAL_VISION_SYSTEM_PROMPT,
 } from "../review/visual/visual-findings";
-import { incr } from "../selfhost/metrics";
+import { incr, observe, REVIEW_LATENCY_BUCKETS } from "../selfhost/metrics";
 import { withAdvisoryAiEnv } from "../selfhost/ai";
 import {
   renderReviewingPlaceholder,
@@ -10362,6 +10362,14 @@ async function maybePublishPrPublicSurface(
       );
       publishedOutputs.push("comment");
       incr("loopover_reviews_published_total", { repo: repoFullName });
+      // Real end-to-end review latency (#review-latency-metric): pr.headShaObservedAt is the moment THIS
+      // exact head SHA became ready for review (see upsertPullRequestFromGitHub) -- reusing
+      // reviewDurationMsSince's existing parse/clamp logic (#4446) so a clock-skew or malformed timestamp
+      // degrades to no observation rather than ever recording a negative/NaN sample.
+      const endToEndLatencyMs = reviewDurationMsSince(pr.headShaObservedAt ?? null, Date.now());
+      if (endToEndLatencyMs !== undefined) {
+        observe("loopover_review_end_to_end_latency_seconds", endToEndLatencyMs / 1000, undefined, REVIEW_LATENCY_BUCKETS);
+      }
     } catch (error) {
       const message = errorMessage(error);
       failedOutputs.push({ output: "comment", error: message, transient: isGitHubTransientPublishError(error) });

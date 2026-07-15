@@ -1065,6 +1065,55 @@ describe("queue processors", () => {
     expect(stickyComment.current?.body).not.toContain("is reviewing");
   });
 
+  // REGRESSION (#review-latency-metric): a successful comment publish records a real end-to-end review-
+  // latency observation, sourced from PullRequestRecord.headShaObservedAt (stamped by upsertPullRequestFromGitHub
+  // the instant this PR's head became ready for review) -- distinct from the queue's own per-job latency_ms.
+  it("records a loopover_review_end_to_end_latency_seconds observation when a comment successfully publishes", async () => {
+    resetMetrics();
+    const env = createTestEnv({
+      GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
+      AI_SUMMARIES_ENABLED: "true",
+      AI_PUBLIC_COMMENTS_ENABLED: "false",
+      AI_DAILY_NEURON_BUDGET: "100000",
+    });
+    await persistRegistrySnapshot(env, normalizeRegistryPayload({ "JSONbored/gittensory": { emission_share: 0.01, issue_discovery_share: 0 } }, { kind: "raw-github", url: "https://example.test" }, "2026-05-23T00:00:00.000Z"));
+    await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);
+    await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", commentMode: "all_prs", publicSurface: "comment_only", autoLabelEnabled: false, checkRunMode: "off", reviewCheckMode: "required", aiReviewMode: "advisory" });
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/pulls/30/files")) return Response.json([{ filename: "src/a.ts", status: "modified", additions: 1, deletions: 0, changes: 1, patch: "@@\n+export const ok = true;" }]);
+      if (url.endsWith("/pulls/30")) return Response.json({ number: 30, title: "Clean PR", state: "open", user: { login: "contributor" }, head: { sha: "a30" }, labels: [], body: "Closes #1" });
+      if (url.includes("/commits/a30/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
+      if (url.includes("/commits/a30/status")) return Response.json({ state: "success", statuses: [] });
+      if (url.includes("/issues/1")) return Response.json({ number: 1, title: "Issue", state: "open", labels: [], user: { login: "reporter" } });
+      if (url.includes("/issues/30/comments") && method === "GET") return Response.json([]);
+      if (url.includes("/issues/30/comments") && method === "POST") return Response.json({ id: 1 }, { status: 201 });
+      if (url.includes("/issues/comments/1") && method === "PATCH") return Response.json({ id: 1 }, { status: 200 });
+      if (url.includes("/branches/")) return Response.json({ protected: false, protection: { required_status_checks: { contexts: [] } } });
+      return Response.json({});
+    });
+
+    await processJob(env, {
+      type: "github-webhook",
+      deliveryId: "review-latency-metric-open",
+      eventName: "pull_request",
+      payload: {
+        action: "opened",
+        installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+        repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+        pull_request: { number: 30, title: "Clean PR", state: "open", user: { login: "contributor" }, head: { sha: "a30" }, labels: [], body: "Closes #1" },
+      },
+    });
+
+    const stored = await getPullRequest(env, "JSONbored/gittensory", 30);
+    expect(typeof stored?.headShaObservedAt).toBe("string"); // the clock the metric is derived from actually started
+    const rendered = await renderMetrics();
+    expect(rendered).toContain("# TYPE loopover_review_end_to_end_latency_seconds histogram");
+    expect(rendered).toContain("loopover_review_end_to_end_latency_seconds_count 1");
+  });
+
   it("keeps the PR comment in 🟪 reviewing state and retries when the final comment update is rate-limited", async () => {
     const env = createTestEnv({
       GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),

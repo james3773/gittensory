@@ -457,6 +457,12 @@ export const pullRequests = sqliteTable(
     // treat that as "unverified", never as "confirmed no linked issue". Set once, never cleared (mirrors
     // linkedIssueHardRuleViolatedAt below).
     bodyObservedAt: text("body_observed_at"),
+    // The moment this PR's CURRENT head SHA first became ready for review: stamped on open (or a fresh commit
+    // while open+non-draft), reset on every new commit, left unset while the PR is a draft (draft-sitting time
+    // must not count toward review latency). Feeds loopover_review_end_to_end_latency_seconds (#review-latency-
+    // metric) -- a real PR-ready-to-review-published span, distinct from job_complete's latency_ms (a single
+    // queue job's own claim-to-completion time, not the full pipeline including queueing/deferral waits).
+    headShaObservedAt: text("head_sha_observed_at"),
     lastSeenOpenAt: text("last_seen_open_at"),
     payloadJson: text("payload_json").notNull().default("{}"),
     // Latest deterministic slop assessment (loopover-computed; written separately from the GitHub sync).
