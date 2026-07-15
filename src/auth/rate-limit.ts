@@ -221,6 +221,15 @@ function isValidIpv6(value: string): boolean {
   return hasHexSegment;
 }
 
+// /v1/auth/github/token (#6114/#6115/#6117) is excluded from the broad /v1/auth/ prefix match below: unlike
+// the OAuth start/callback/device-poll flows it sits alongside, it always requires (and validates) a real
+// session bearer token to do anything useful, so it should rate-limit per SESSION like any other authenticated
+// route -- not per IP, which would let a caller with a stolen session token bypass the strict 10/min cap by
+// rotating source IPs, and would let unrelated sessions behind one NAT (a shared office network, CI infra)
+// throttle each other.
 function isPreAuthRateLimitPath(path: string): boolean {
-  return path === "/health" || path === "/v1/mcp/compatibility" || path === "/openapi.json" || path === "/mcp" || path.startsWith("/v1/auth/") || path === "/v1/github/webhook";
+  return (
+    (path === "/health" || path === "/v1/mcp/compatibility" || path === "/openapi.json" || path === "/mcp" || path.startsWith("/v1/auth/") || path === "/v1/github/webhook") &&
+    path !== "/v1/auth/github/token"
+  );
 }

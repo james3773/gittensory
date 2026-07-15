@@ -112,6 +112,7 @@ describe("private-beta auth and rate limiting", () => {
     expect(routeClassForPath("/v1/github/webhook")).toBe("strict");
     expect(routeClassForPath("/v1/orb/ingest")).toBe("strict"); // open telemetry ingest — abuse-capped per IP
     expect(routeClassForPath("/v1/auth/github/device/start")).toBe("strict");
+    expect(routeClassForPath("/v1/auth/github/token")).toBe("strict"); // #6117: same strict cap as the rest of /v1/auth/*
     expect(routeClassForPath("/v1/local/branch-analysis")).toBe("expensive");
     expect(routeClassForPath("/loopover/shot")).toBe("expensive");
     expect(routeClassForPath("/v1/scoring/preview")).toBe("expensive");
@@ -178,6 +179,42 @@ describe("private-beta auth and rate limiting", () => {
     expect(observedKeys).toHaveLength(2);
     expect(observedKeys[0]).toBe(observedKeys[1]);
     expect(observedKeys[0]).toMatch(/^normal:\/v1\/public\/github\/repos\/:owner\/:repo\/stats:ip:/);
+  });
+
+  it("keys /v1/auth/github/token by SESSION, not by IP (#6117) -- unlike its pre-auth OAuth-flow siblings", async () => {
+    const observedKeys: string[] = [];
+    const env = rateLimitTestEnv({}, observedKeys);
+    const { token: sessionToken } = await createSessionForGitHubUser(env, { login: "jsonbored", id: 42 });
+
+    // The same session's token from two DIFFERENT IPs shares one bucket -- a stolen token can't be used to
+    // bypass the strict cap by rotating source IPs.
+    await expect(
+      enforceRateLimit(fakeContext(env, "/v1/auth/github/token", { authorization: `Bearer ${sessionToken}`, "cf-connecting-ip": "203.0.113.9" }), "strict"),
+    ).resolves.toBeNull();
+    await expect(
+      enforceRateLimit(fakeContext(env, "/v1/auth/github/token", { authorization: `Bearer ${sessionToken}`, "cf-connecting-ip": "198.51.100.50" }), "strict"),
+    ).resolves.toBeNull();
+    expect(observedKeys).toHaveLength(2);
+    expect(observedKeys[0]).toBe(observedKeys[1]);
+    expect(observedKeys[0]).toMatch(/^strict:\/v1\/auth\/github\/token:token:/);
+    const firstSessionKey = observedKeys[0];
+
+    // A DIFFERENT session's token from the SAME IP gets its own independent bucket -- unrelated sessions
+    // behind one NAT/CI-runner IP don't throttle each other.
+    observedKeys.length = 0;
+    const { token: otherSessionToken } = await createSessionForGitHubUser(env, { login: "other-user", id: 43 });
+    await expect(
+      enforceRateLimit(fakeContext(env, "/v1/auth/github/token", { authorization: `Bearer ${otherSessionToken}`, "cf-connecting-ip": "203.0.113.9" }), "strict"),
+    ).resolves.toBeNull();
+    expect(observedKeys[0]).toMatch(/^strict:\/v1\/auth\/github\/token:token:/);
+    expect(observedKeys[0]).not.toBe(firstSessionKey);
+
+    // No/invalid bearer still falls back to IP-keying (the pre-auth default), matching every other route.
+    observedKeys.length = 0;
+    await expect(
+      enforceRateLimit(fakeContext(env, "/v1/auth/github/token", { "cf-connecting-ip": "203.0.113.9" }), "strict"),
+    ).resolves.toBeNull();
+    expect(observedKeys[0]).toMatch(/^strict:\/v1\/auth\/github\/token:ip:/);
   });
 
   it("ignores proxy fallback headers when cf-connecting-ip is absent", async () => {
