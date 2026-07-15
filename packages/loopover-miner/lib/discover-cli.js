@@ -200,8 +200,7 @@ export async function runDiscover(args, options = {}) {
       }
       return 0;
     } catch (error) {
-      console.error(error instanceof Error ? error.message : String(error));
-      return 2;
+      return reportCliFailure(parsed.json, describeCliError(error));
     }
   }
 

@@ -427,6 +427,25 @@ describe("runDiscover (#4247)", () => {
     expect(error).toHaveBeenCalledWith("github_unreachable");
   });
 
+  it("#5830: --dry-run --json reports fan-out failures as a parseable {ok:false,error} object", async () => {
+    const initPortfolioQueue = vi.fn();
+    const fetchCandidateIssuesWithSummary = vi.fn(async () => {
+      throw new Error("github_unreachable");
+    });
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    const exitCode = await runDiscover(["acme/widgets", "--dry-run", "--json"], {
+      nowMs: NOW,
+      initPortfolioQueue,
+      fetchCandidateIssuesWithSummary,
+    });
+
+    expect(exitCode).toBe(2);
+    expect(initPortfolioQueue).not.toHaveBeenCalled();
+    const payload = JSON.parse(String(log.mock.calls[0]?.[0]));
+    expect(payload).toEqual({ ok: false, error: "github_unreachable" });
+  });
+
   it("#4847: --dry-run stringifies a thrown non-Error value instead of crashing", async () => {
     const fetchCandidateIssuesWithSummary = vi.fn(async () => {
       throw "raw_string_fault";
