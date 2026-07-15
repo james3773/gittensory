@@ -73,6 +73,33 @@ describe("evaluateClaCheck (#2564)", () => {
     });
   });
 
+  // #5838: a blank/whitespace-only consentPhrase must normalize to null (unset), matching the config-as-code
+  // path's normalizeOptionalString — otherwise `body.includes("")` is unconditionally true, silently satisfying
+  // CLA consent for every PR (a gate bypass reachable via a fat-fingered blank save of the dashboard field).
+  describe("blank consentPhrase normalizes to unset (regression for #5838)", () => {
+    it("an empty-string consentPhrase as the ONLY configured method → nothing configured, no finding (not auto-satisfied)", () => {
+      expect(evaluateClaCheck(config({ consentPhrase: "" }), { body: "no consent statement here" })).toEqual([]);
+    });
+
+    it("a whitespace-only consentPhrase as the ONLY configured method → nothing configured, no finding", () => {
+      expect(evaluateClaCheck(config({ consentPhrase: "   " }), { body: "no consent statement here" })).toEqual([]);
+    });
+
+    it("an empty-string consentPhrase with a configured check-run behaves as if the phrase were null (unresolved → HOLD)", () => {
+      const out = evaluateClaCheck(config({ consentPhrase: "", checkRunName: "CLA Assistant Lite" }), { body: "no phrase here", checkRunConclusion: undefined });
+      expect(out).toHaveLength(1);
+      expect(out[0]?.code).toBe(CLA_CHECK_UNRESOLVED_CODE);
+    });
+
+    it("an empty-string consentPhrase with a resolved-failing check-run → cla_consent_missing lists only the check, never the blank phrase", () => {
+      const out = evaluateClaCheck(config({ consentPhrase: "", checkRunName: "CLA Assistant Lite" }), { body: "no phrase here", checkRunConclusion: "failure" });
+      expect(out).toHaveLength(1);
+      expect(out[0]?.code).toBe(CLA_CONSENT_MISSING_CODE);
+      expect(out[0]?.detail).toContain('the "CLA Assistant Lite" check must pass');
+      expect(out[0]?.detail).not.toContain("the PR description must contain");
+    });
+  });
+
   describe("either-method contract (both configured)", () => {
     it("phrase satisfied, check-run unresolved → satisfied (phrase alone decides; no hold)", () => {
       const out = evaluateClaCheck(config({ consentPhrase: "agree to the CLA", checkRunName: "CLA Assistant Lite" }), {

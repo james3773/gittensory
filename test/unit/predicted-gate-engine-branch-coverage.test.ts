@@ -118,6 +118,12 @@ describe("predicted-gate engine branch coverage (#2283)", () => {
     expect(evaluateClaCheck({ consentPhrase: "I agree", checkRunName: "CLA Bot" }, { body: "nope", checkRunConclusion: undefined })[0]?.code).toBe(
       CLA_CHECK_UNRESOLVED_CODE,
     );
+    // #5838: a blank/whitespace-only consentPhrase normalizes to null (unset), so it never auto-satisfies consent.
+    expect(evaluateClaCheck({ consentPhrase: "", checkRunName: null }, { body: "no consent here" })).toEqual([]);
+    expect(evaluateClaCheck({ consentPhrase: "   ", checkRunName: null }, { body: "no consent here" })).toEqual([]);
+    expect(evaluateClaCheck({ consentPhrase: "", checkRunName: "CLA Bot" }, { body: "nope", checkRunConclusion: undefined })[0]?.code).toBe(
+      CLA_CHECK_UNRESOLVED_CODE,
+    );
     expect(guardrailPathMatches(["src/a.ts"], ["src/a.ts"])).toEqual([{ path: "src/a.ts", glob: "src/a.ts" }]);
     expect(guardrailPathMatches(["other.ts"], ["src/a.ts"])).toEqual([]);
     const pathological = "src/*-*-*-final.ts";

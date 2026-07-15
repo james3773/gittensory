@@ -50,8 +50,13 @@ export function evaluateClaCheck(
   config: ClaCheckConfig,
   ctx: { body?: string | null | undefined; checkRunConclusion?: string | null | undefined },
 ): AdvisoryFinding[] {
-  if (config.consentPhrase === null && config.checkRunName === null) return []; // nothing configured ⇒ no finding
-  const phraseSatisfied = config.consentPhrase !== null && (ctx.body ?? "").toLowerCase().includes(config.consentPhrase.toLowerCase());
+  // A blank/whitespace-only consentPhrase is treated as unset (null), mirroring the config-as-code path's
+  // normalizeOptionalString (packages/loopover-engine/src/focus-manifest.ts): otherwise `"".includes("")` (or
+  // any body `.includes("")`) is unconditionally true, silently satisfying consent for every PR — the DB-backed
+  // dashboard `claConsentPhrase` field has no non-empty validation and reaches here via `?? null` unchanged (#5838).
+  const consentPhrase = config.consentPhrase !== null && config.consentPhrase.trim().length > 0 ? config.consentPhrase : null;
+  if (consentPhrase === null && config.checkRunName === null) return []; // nothing configured ⇒ no finding
+  const phraseSatisfied = consentPhrase !== null && (ctx.body ?? "").toLowerCase().includes(consentPhrase.toLowerCase());
   const checkRunSatisfied = config.checkRunName !== null && (ctx.checkRunConclusion === "success" || ctx.checkRunConclusion === "neutral");
   if (phraseSatisfied || checkRunSatisfied) return [];
   // A configured check-run whose conclusion is unresolved: cannot confirm OR deny consent via that method, so
@@ -69,7 +74,7 @@ export function evaluateClaCheck(
     ];
   }
   const missing: string[] = [];
-  if (config.consentPhrase !== null) missing.push(`the PR description must contain "${config.consentPhrase}"`);
+  if (consentPhrase !== null) missing.push(`the PR description must contain "${consentPhrase}"`);
   if (config.checkRunName !== null) missing.push(`the "${config.checkRunName}" check must pass`);
   return [
     {
