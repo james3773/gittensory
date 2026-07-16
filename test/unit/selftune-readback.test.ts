@@ -33,9 +33,15 @@ describe("applySelfTuneOverrideToSettings — tightening-only live read-back (#s
 
 describe("resolveRepositorySettings — self-tune override overlay (flag-gated)", () => {
   const repo = "acme/widgets";
-  async function seed(env: Env): Promise<void> {
+  // `autonomy: { review: "auto" }` grants acting-autonomy consent (isAgentConfigured) so the happy-path override
+  // read-back is exercised. This wasn't required before the opt-out/consent fix below -- the override used to be
+  // read back unconditionally once the global flag was on, regardless of whether the repo had ANY acting
+  // autonomy configured. Now the read-back honors the same consent `selfTuneRepos` requires before promoting a
+  // NEW override in the first place, so a repo with no acting autonomy (or a revoked one) must not keep having a
+  // stale, already-promoted override silently reapplied either.
+  async function seed(env: Env, autonomy: Record<string, string> = { review: "auto" }): Promise<void> {
     await env.DB.prepare("INSERT INTO repositories (full_name, owner, name, is_installed, is_registered) VALUES (?, 'acme', 'widgets', 1, 1)").bind(repo).run();
-    await repositories.upsertRepositorySettings(env, { repoFullName: repo, qualityGateMinScore: 50 });
+    await repositories.upsertRepositorySettings(env, { repoFullName: repo, qualityGateMinScore: 50, autonomy });
     await writeLiveOverride(env as unknown as StorageEnv, repo, { confidenceFloor: 0.7 });
   }
 
@@ -48,6 +54,19 @@ describe("resolveRepositorySettings — self-tune override overlay (flag-gated)"
   it("flag OFF (default): the override is never read — settings stay byte-identical (50)", async () => {
     const env = createTestEnv();
     await seed(env);
+    expect((await resolveRepositorySettings(env, repo)).qualityGateMinScore).toBe(50);
+  });
+
+  it("flag ON but per-repo opt-out (`.loopover.yml` review.selftune: false): a previously-promoted override is NOT read back (50, not 70)", async () => {
+    const env = createTestEnv({ LOOPOVER_REVIEW_SELFTUNE: "true" });
+    await seed(env);
+    await upsertRepoFocusManifest(env, repo, { review: { selftune: false } }, "api_record");
+    expect((await resolveRepositorySettings(env, repo)).qualityGateMinScore).toBe(50);
+  });
+
+  it("flag ON but acting-autonomy consent revoked (no acting autonomy level configured): a previously-promoted override is NOT read back (50, not 70)", async () => {
+    const env = createTestEnv({ LOOPOVER_REVIEW_SELFTUNE: "true" });
+    await seed(env, {}); // {} normalizes to every class at "observe" (deny-by-default) -- isAgentConfigured is false
     expect((await resolveRepositorySettings(env, repo)).qualityGateMinScore).toBe(50);
   });
 

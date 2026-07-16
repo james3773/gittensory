@@ -2,6 +2,7 @@ import { getGlobalContributorBlacklist, getRepositorySettings } from "../db/repo
 import { loadOverride, type StorageEnv } from "../review/auto-apply";
 import { resolveEffectiveSettings } from "../signals/focus-manifest";
 import { loadRepoFocusManifest } from "../signals/focus-manifest-loader";
+import { isAgentConfigured } from "./autonomy";
 import type { RepositorySettings } from "../types";
 
 /** Default-OFF self-tune flag (mirrors selftune-wire's `isSelfTuneEnabled`; inlined here to avoid a
@@ -30,7 +31,16 @@ export function applySelfTuneOverrideToSettings(
 
 /** Effective repository settings: DB values overlaid with `.loopover.yml` (config-as-code), then — when the
  *  self-improvement loop is enabled (`LOOPOVER_REVIEW_SELFTUNE`, default OFF) — with the repo's promoted,
- *  soak-passed, tightening-only auto-tune override. Flag-OFF (default) ⇒ no override read, byte-identical to before. */
+ *  soak-passed, tightening-only auto-tune override. Flag-OFF (default) ⇒ no override read, byte-identical to before.
+ *
+ *  The override read-back honors the SAME two consent signals `selfTuneRepos` (`review/selftune-wire.ts`) checks
+ *  before ever generating a new recommendation: an explicit per-repo `.loopover.yml` `review.selftune: false`
+ *  opt-out, and the repo's broader acting-autonomy consent (`isAgentConfigured`). Without this, a repo that
+ *  opts out (or has its autonomy fully revoked) AFTER an override was already promoted would keep having that
+ *  stale override silently reapplied to every gate decision forever — the only escape hatch would be the
+ *  maintainer-only DELETE override route, which nothing surfaces to the operator. Opting out here does NOT
+ *  delete the promoted override (a human, or re-opting-in, can still see/clear it) — it just stops it from
+ *  being read back while the opt-out is in effect. */
 export async function resolveRepositorySettings(env: Env, repoFullName: string): Promise<RepositorySettings> {
   const [dbSettings, manifest, globalContributorBlacklist] = await Promise.all([
     getRepositorySettings(env, repoFullName),
@@ -39,6 +49,8 @@ export async function resolveRepositorySettings(env: Env, repoFullName: string):
   ]);
   const effective = resolveEffectiveSettings(dbSettings, manifest, globalContributorBlacklist);
   if (!selfTuneFlagOn(env)) return effective;
+  if (manifest.review.selftune === false) return effective; // explicit per-repo opt-out — same check as selfTuneRepos
+  if (!isAgentConfigured(effective.autonomy)) return effective; // acting-autonomy consent revoked/never granted
   // loadOverride is internally fail-safe (returns null on a DB blip), so this never breaks settings resolution.
   const override = await loadOverride(env as unknown as StorageEnv, repoFullName);
   return applySelfTuneOverrideToSettings(effective, override);
