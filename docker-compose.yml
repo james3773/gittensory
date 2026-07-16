@@ -430,6 +430,12 @@ services:
       # Reviews land in bursts, not constant load -- keep both models warm across typical gaps between
       # bursts instead of Ollama's 5m default forcing a cold-start reload every time.
       OLLAMA_KEEP_ALIVE: "${OLLAMA_KEEP_ALIVE:-30m}"
+      # bge-m3's real context window is 8192 tokens, but Ollama's own default batch size (2048) is well
+      # below that -- confirmed in production logs ("input (N tokens) is too large to process") on RAG
+      # chunks up to ~4991 tokens, each one silently dropped from that PR's review context
+      # (rag_embed_batch_degraded, src/review/rag.ts's per-item fallback). The embed request itself
+      # (src/selfhost/ai.ts) has no way to set this per-call -- it's server-side only.
+      OLLAMA_NUM_BATCH: "${OLLAMA_NUM_BATCH:-8192}"
     # Ollama can load multi-GB models into memory; raised from the single-embedder-era default (8g) now that
     # a vision model (#4335) shares this container's memory ceiling alongside bge-m3 -- still capped so a
     # runaway pull can't exhaust host RAM and take down the core review pipeline (#1828).
