@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 
 import {
   computeTrackRecordSummary,
+  getTrackRecordSummary,
+  TRACK_RECORD_SUMMARY_READ_VERSION,
   renderTrackRecordSummaryMarkdown,
   resolveTrackRecordSummaryConfig,
   shouldIncludeTrackRecordSummary,
@@ -659,4 +661,36 @@ test("computeTrackRecordSummary accepts manifest config directly", () => {
   });
 
   assert.equal(summary.enabled, true);
+});
+
+test("getTrackRecordSummary wraps the computed summary in a stable versioned envelope: populated (#6246)", () => {
+  const input = {
+    login: "MinerOne",
+    now: NOW,
+    config: { includeTrackRecordSummary: true, warnings: [] },
+    outcomes: [
+      { id: 11, repoFullName: "jsonbored/loopover", authorLogin: "minerone", state: "merged", createdAt: "2026-06-01T00:00:00Z", mergedAt: "2026-06-02T00:00:00Z" },
+      { id: "pr-12", repoFullName: "owner/repo", authorLogin: "MinerOne", state: "closed", createdAt: "2026-06-03T00:00:00Z", closedAt: "2026-06-04T00:00:00Z" },
+    ],
+    incidents: [],
+  } as const;
+  const result = getTrackRecordSummary(input);
+  assert.equal(result.version, TRACK_RECORD_SUMMARY_READ_VERSION);
+  assert.equal(result.version, 1);
+  // The envelope carries exactly the computed summary, unmodified.
+  assert.deepEqual(result.summary, computeTrackRecordSummary(input));
+  assert.equal(result.summary.enabled, true);
+  assert.equal(result.summary.login, "minerone");
+  assert.equal(result.summary.outcomes.merged, 1);
+  assert.equal(result.summary.outcomes.closedWithoutMerge, 1);
+});
+
+test("getTrackRecordSummary returns a versioned envelope for an empty/no-history miner (#6246)", () => {
+  const result = getTrackRecordSummary({ login: "ghost", now: NOW, outcomes: [], incidents: [] });
+  assert.equal(result.version, 1);
+  assert.equal(result.summary.login, "ghost");
+  assert.equal(result.summary.outcomes.merged, 0);
+  assert.equal(result.summary.outcomes.closedWithoutMerge, 0);
+  // No config supplied → the summary defaults to disabled, same as computeTrackRecordSummary.
+  assert.equal(result.summary.enabled, false);
 });

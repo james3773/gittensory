@@ -376,6 +376,33 @@ export function computeTrackRecordSummary(input: {
   };
 }
 
+/** Bump when the {@link TrackRecordSummaryReadResult} envelope shape changes in a non-additive way (#6246). */
+export const TRACK_RECORD_SUMMARY_READ_VERSION = 1 as const;
+
+/** The stable, versioned read envelope returned by {@link getTrackRecordSummary}. */
+export type TrackRecordSummaryReadResult = {
+  version: typeof TRACK_RECORD_SUMMARY_READ_VERSION;
+  summary: TrackRecordSummary;
+};
+
+/**
+ * Stable, documented public read contract for a miner's track-record summary (#6246, groundwork for #6208's
+ * reputation-bridge spec). A thin, versioned wrapper over {@link computeTrackRecordSummary}: it takes the same
+ * public PR-outcome and moderation-record reads the summary is already derived from and returns them under a
+ * fixed envelope ({@link TRACK_RECORD_SUMMARY_READ_VERSION} + the computed summary), so a future consumer can
+ * depend on one documented shape regardless of how the underlying {@link TrackRecordSummary} evolves. Read-only;
+ * the envelope adds no score/ranking fields, preserving the same public-safe boundary the summary itself keeps.
+ */
+export function getTrackRecordSummary(input: {
+  login: string;
+  outcomes: readonly TrackRecordPullRequestOutcome[];
+  incidents?: readonly TrackRecordIncidentRecord[] | undefined;
+  now?: string | Date | null | undefined;
+  config?: TrackRecordSummaryConfig | TrackRecordSummaryManifest | Record<string, unknown> | null | undefined;
+}): TrackRecordSummaryReadResult {
+  return { version: TRACK_RECORD_SUMMARY_READ_VERSION, summary: computeTrackRecordSummary(input) };
+}
+
 export function shouldIncludeTrackRecordSummary(
   config: TrackRecordSummaryConfig | TrackRecordSummaryManifest | Record<string, unknown> | null | undefined,
 ): boolean {

@@ -127,6 +127,8 @@ export {
 } from "./reviewer-consensus-calibration.js";
 export {
   computeTrackRecordSummary,
+  getTrackRecordSummary,
+  TRACK_RECORD_SUMMARY_READ_VERSION,
   renderTrackRecordSummaryMarkdown,
   resolveTrackRecordSummaryConfig,
   shouldIncludeTrackRecordSummary,
@@ -141,6 +143,7 @@ export {
   type TrackRecordSummaryConfig,
   type TrackRecordSummaryManifest,
   type TrackRecordSummaryOutcomeCounts,
+  type TrackRecordSummaryReadResult,
   type TrackRecordTenure,
 } from "./track-record-summary.js";
 export * from "./governor/rate-limit.js";
