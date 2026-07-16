@@ -167,6 +167,22 @@ describe("predicted-gate engine module coverage (#2283)", () => {
     expect(sanitizePublicComment("open pr count 12 exceeds threshold 10")).toContain("private context");
   });
 
+  // Regression: this sanitizer's phrase list had no entry for bare "cohort" or standalone
+  // miner-originated/human-originated/raw-trust (only compound phrases like "raw trust score"), unlike the
+  // canonical PUBLIC_UNSAFE_TERMS boundary (src/signals/redaction.ts) which treats all of these as unsafe.
+  // A bare "score" is intentionally NOT redacted by this shared function (see the comment above its
+  // cohort/originated replace call in sanitize-public-comment.ts): it is also reused by
+  // src/services/score-breakdown.ts's own contributor-facing "explain my score" copy, which legitimately says
+  // "score" throughout by design.
+  it("redacts bare cohort and standalone miner-originated/human-originated/raw-trust mentions", () => {
+    expect(
+      sanitizePublicComment("This diff looks miner-originated and the resulting cohort standing would only shift modestly."),
+    ).not.toMatch(/miner-originated|cohort/i);
+    expect(sanitizePublicComment("This PR affects the cohort.")).toContain("private context");
+    expect(sanitizePublicComment("This change is human originated.")).toContain("private context");
+    expect(sanitizePublicComment("Raw trust is unaffected by this PR.")).toContain("private context");
+  });
+
   it("exercises focus-manifest guidance branches", () => {
     const manifest: FocusManifest = {
       present: true,

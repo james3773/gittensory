@@ -417,6 +417,19 @@ describe("GitHub mention commands", () => {
     expect(sanitizePublicComment("open_pr_pressure closed_pr_credibility low_credibility credibility updates")).not.toMatch(/open_pr_pressure|closed_pr_credibility|low_credibility|credibility/i);
     expect(sanitizePublicComment("Command: @loopover reviewability")).toContain("@loopover reviewability");
     expect(sanitizePublicComment("private ranking, wallet, payout")).toBe("private context");
+    // Regression: bare "cohort" and standalone miner-originated/human-originated/raw-trust were not redacted
+    // (only compound phrases like "raw trust score" were), unlike the canonical PUBLIC_UNSAFE_TERMS boundary
+    // (src/signals/redaction.ts) which treats all of these as unsafe -- so unconstrained free text mentioning
+    // them could reach a real public GitHub comment unredacted. A bare "score" is intentionally NOT added here
+    // (see the comment above sanitizePublicComment's cohort/originated replace call): this function is shared
+    // with src/services/score-breakdown.ts's own contributor-facing "explain my score" copy, which legitimately
+    // says "score" throughout by design.
+    expect(
+      sanitizePublicComment("This diff looks miner-originated and the resulting cohort standing would only shift modestly."),
+    ).not.toMatch(/miner-originated|cohort/i);
+    expect(sanitizePublicComment("This PR affects the cohort.")).toContain("private context");
+    expect(sanitizePublicComment("This change is human originated.")).toContain("private context");
+    expect(sanitizePublicComment("Raw trust is unaffected by this PR.")).toContain("private context");
   });
 
   it("redacts private score projection deltas from public command rerun guidance", () => {

@@ -44,6 +44,7 @@ export const FORBIDDEN_PUBLIC_COMMENT_WORDS = [
   "wallet",
   "hotkey",
   "raw trust score",
+  "raw trust",
   "trust score",
   "coldkey",
   "seed phrase",
@@ -68,7 +69,23 @@ export const FORBIDDEN_PUBLIC_COMMENT_WORDS = [
   "private ranking",
   "rankings",
   "ranking",
+  "cohort",
+  "miner-originated",
+  "miner originated",
+  "human-originated",
+  "human originated",
 ] as const;
+
+// A bare "score" is checked separately from the substring list above (not folded in as another entry):
+// FORBIDDEN_PUBLIC_COMMENT_WORDS is matched with a plain case-insensitive `.includes()`, and an unqualified
+// "score" substring also matches ordinary English words that carry no gittensor meaning at all ("underscore",
+// "outscore", "overscore"), which would cause safe comments to be dropped for no reason. It still must be
+// caught -- the canonical public/private boundary (PUBLIC_UNSAFE_TERMS in src/signals/redaction.ts) treats any
+// bare score/cohort mention as unsafe -- so it's matched here with the same `\bscore\w*\b` word-boundary shape
+// the canonical pattern uses (catches "score"/"scores"/"scored"/"scorer", though not "scoring", which drops
+// the trailing "e" and so isn't a literal "score" substring -- the canonical pattern shares this same limit)
+// instead of a plain substring test.
+const BARE_SCORE_TERM_PATTERN = /\bscore\w*\b/i;
 
 function computeDaysSince(isoDateString: string, now: Date): number {
   // A malformed/empty timestamp -> NaN, which flows into computePrivateBurdenReductionScore and then the
@@ -149,6 +166,10 @@ export function sanitizePublicComment(comment: string): string {
     if (comment.toLowerCase().includes(forbiddenWord.toLowerCase())) {
       throw new Error(`Public comment contains forbidden word: "${forbiddenWord}"`);
     }
+  }
+  const bareScoreMatch = comment.match(BARE_SCORE_TERM_PATTERN);
+  if (bareScoreMatch) {
+    throw new Error(`Public comment contains forbidden word: "${bareScoreMatch[0]}"`);
   }
   return comment;
 }

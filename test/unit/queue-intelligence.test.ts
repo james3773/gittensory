@@ -344,3 +344,46 @@ describe("sanitizePublicComment — sanitizer regression", () => {
     }
   });
 });
+
+describe("sanitizePublicComment — cohort/score public-boundary gap regression", () => {
+  // Audited failure scenario: unconstrained AI-review free text echoed straight through toPublicSafe()
+  // (src/services/ai-review.ts) reached a real public GitHub comment because this sanitizer's wordlist had no
+  // entry for "cohort" and no bare "score" entry (only qualified phrases like "estimated score"), unlike the
+  // canonical PUBLIC_UNSAFE_TERMS boundary (src/signals/redaction.ts) which treats both as unsafe.
+  it("throws on the audited leak sentence (miner-originated / cohort / bare score, none of them a listed compound phrase)", () => {
+    expect(() =>
+      sanitizePublicComment(
+        "This diff looks miner-originated and the resulting cohort standing / score would only shift modestly.",
+      ),
+    ).toThrow();
+  });
+
+  it("throws for a bare 'cohort' mention", () => {
+    expect(() => sanitizePublicComment("This PR affects the cohort differently.")).toThrow(/cohort/i);
+  });
+
+  it("throws for a bare 'score' mention that isn't part of any listed compound phrase", () => {
+    expect(() => sanitizePublicComment("The score looks good here.")).toThrow(/score/i);
+    // `\bscore\w*\b` mirrors the canonical PUBLIC_UNSAFE_TERMS `\w*` suffix shape (src/signals/redaction.ts),
+    // which only extends a bare match, so it catches "scores"/"scored" but not "scoring" (that drops the "e").
+    expect(() => sanitizePublicComment("Multiple scores were affected by this change.")).toThrow(/scores/i);
+  });
+
+  it("throws for standalone miner-originated / human-originated / raw trust (not just the 'raw trust score' compound)", () => {
+    expect(() => sanitizePublicComment("This change is miner-originated.")).toThrow(/miner-originated/i);
+    expect(() => sanitizePublicComment("This change is human originated.")).toThrow(/human originated/i);
+    expect(() => sanitizePublicComment("Raw trust is unaffected by this PR.")).toThrow(/raw trust/i);
+  });
+
+  it("does NOT throw on ordinary English words that merely contain 'score' as a substring (no over-blocking)", () => {
+    // A plain `.includes("score")` check (rather than a word-boundary match) would misfire on these -- neither
+    // is a gittensor score reference, and dropping the whole public comment for a false positive is a real
+    // regression, not a safe default, since it silently swallows a legitimate comment instead of leaking it.
+    expect(sanitizePublicComment("Prefer the underscore-prefixed helper here.")).toBe(
+      "Prefer the underscore-prefixed helper here.",
+    );
+    expect(sanitizePublicComment("This change would outscore the previous approach on readability alone.")).toBe(
+      "This change would outscore the previous approach on readability alone.",
+    );
+  });
+});
