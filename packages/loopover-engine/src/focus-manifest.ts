@@ -435,10 +435,29 @@ export type FocusManifestUpstreamDriftIssuesConfig = {
  * federated env var; not present ⇒ disabled ⇒ nothing is bundled and no network call is made, byte-identical
  * to before this override existed. (ORB_AIR_GAP gates the separate, always-on #1255 orb telemetry path in
  * src/selfhost/orb-collector.ts and is unrelated to this opt-in.)
+ *
+ * `collectorUrl`/`collectorMode` (#6479) additionally arm the transport client
+ * (src/orb/federated-collector.ts), which pushes this instance's bundle to — and/or pulls peer bundles from —
+ * an endpoint the OPERATOR configures. `enabled: true` alone still exports nothing over the wire: without a
+ * `collectorUrl` there is nowhere to send it, and there is deliberately no default collector to fall back to.
  */
+export const FEDERATED_COLLECTOR_MODES = ["push", "pull", "both"] as const;
+export type FederatedCollectorMode = (typeof FEDERATED_COLLECTOR_MODES)[number];
+
 export type FocusManifestFederatedIntelligenceConfig = {
   present: boolean;
   enabled: boolean;
+  /**
+   * The operator-configured collector this instance pushes its own bundle to and/or pulls peer bundles from
+   * (#6479). Null unless the operator sets one: there is deliberately NO hardcoded or auto-discovered default,
+   * because this codebase's self-host posture assumes no central/managed collector exists. Validated at
+   * config-read time against the same `isSafeHttpUrl` SSRF guard every other URL-valued manifest field uses,
+   * so it must be a public HTTPS host — a collector an operator runs is reachable at one, and a loopback/
+   * private-range target would be both unreachable from a Worker and an SSRF footgun.
+   */
+  collectorUrl: string | null;
+  /** Which directions the client may use against `collectorUrl`. Null ⇒ `both`. */
+  collectorMode: FederatedCollectorMode | null;
 };
 
 /**
@@ -1191,6 +1210,8 @@ const EMPTY_UPSTREAM_DRIFT_ISSUES_CONFIG: FocusManifestUpstreamDriftIssuesConfig
 const EMPTY_FEDERATED_INTELLIGENCE_CONFIG: FocusManifestFederatedIntelligenceConfig = {
   present: false,
   enabled: false,
+  collectorUrl: null,
+  collectorMode: null,
 };
 
 const EMPTY_MANIFEST: FocusManifest = {
@@ -2076,7 +2097,23 @@ function parseFederatedIntelligenceConfig(value: JsonValue | undefined, warnings
   }
   const record = value as Record<string, JsonValue>;
   const enabled = normalizeOptionalBoolean(record.enabled, "federatedIntelligence.enabled", warnings) ?? false;
-  return { present: true, enabled };
+  const collectorUrl = parseFederatedCollectorUrl(record.collectorUrl, warnings);
+  const collectorMode = normalizeOptionalEnum(record.collectorMode, "federatedIntelligence.collectorMode", FEDERATED_COLLECTOR_MODES, warnings);
+  return { present: true, enabled, collectorUrl, collectorMode };
+}
+
+/** Parse `federatedIntelligence.collectorUrl` (#6479) — validated at CONFIG-READ time against the same
+ *  `isSafeHttpUrl` SSRF guard every other URL-valued manifest field uses (mirrors
+ *  {@link parseVisualProductionUrl}). A non-HTTPS or private/loopback host is dropped with a warning rather
+ *  than accepted, so an unsafe endpoint can never reach the transport client at all. */
+function parseFederatedCollectorUrl(value: JsonValue | undefined, warnings: string[]): string | null {
+  const url = parsePublicSafeText(value, "federatedIntelligence.collectorUrl", warnings);
+  if (url === null) return null;
+  if (!isSafeHttpUrl(url)) {
+    warnings.push(`Manifest "federatedIntelligence.collectorUrl" must be a valid HTTPS URL targeting a public host; ignoring it.`);
+    return null;
+  }
+  return url;
 }
 
 /** Serialize a federatedIntelligence config back into the parse-compatible shape so a cached snapshot
@@ -2084,7 +2121,7 @@ function parseFederatedIntelligenceConfig(value: JsonValue | undefined, warnings
  *  configured. */
 export function federatedIntelligenceConfigToJson(config: FocusManifestFederatedIntelligenceConfig): JsonValue {
   if (!config.present) return null;
-  return { enabled: config.enabled };
+  return { enabled: config.enabled, collectorUrl: config.collectorUrl, collectorMode: config.collectorMode };
 }
 
 function normalizeOptionalEnum<T extends string>(value: JsonValue | undefined, field: string, allowed: readonly T[], warnings: string[]): T | null {

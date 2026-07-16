@@ -69,7 +69,14 @@ async function resolved(
 
 /** A manifest carrying only the block the builder reads. */
 function manifest(enabled: boolean | undefined): Pick<FocusManifest, "federatedIntelligence"> {
-  return { federatedIntelligence: { present: enabled !== undefined, enabled: enabled ?? false } };
+  return {
+    federatedIntelligence: {
+      present: enabled !== undefined,
+      enabled: enabled ?? false,
+      collectorUrl: null,
+      collectorMode: null,
+    },
+  };
 }
 
 /** A db that fails the test if it is touched at all — proves the opted-out path reads nothing. */

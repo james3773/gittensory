@@ -1277,3 +1277,9 @@ settings:
 # peer-to-peer and assumes no central service at all.
 # federatedIntelligence:
 #   enabled: true   # Bool. Default: false (nothing is exported).
+#   # The collector YOU run or trust (#6479). There is deliberately NO default and no auto-discovery -- with
+#   # this unset, `enabled: true` still sends nothing, because there is nowhere to send it. Must be a public
+#   # HTTPS URL: it is validated at config-read time against the same SSRF guard every other URL field here
+#   # uses, so an http:// or localhost/private-range endpoint is dropped with a warning.
+#   collectorUrl: https://collector.example.org/v1/federated
+#   collectorMode: both   # push | pull | both. Default: both.
