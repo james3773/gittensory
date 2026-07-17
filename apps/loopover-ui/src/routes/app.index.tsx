@@ -20,6 +20,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
 import { StatusPill } from "@/components/site/control-primitives";
+import { EmptyState, ErrorState } from "@/components/site/state-views";
 import { PageHeader } from "@/components/site/primitives";
 import { TrendChart } from "@/components/site/trend-chart";
 import { type AppRole, useSession } from "@/lib/api/session";
@@ -170,14 +171,18 @@ function AppOverview() {
           className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3"
         >
           {overview.status === "error" && (
-            <div className="col-span-full rounded-token border border-warning/30 bg-warning/[0.04] p-4 text-token-sm text-warning">
-              App overview is unavailable right now ({overview.error}).
-            </div>
+            <ErrorState
+              className="col-span-full"
+              title="App overview is unavailable right now"
+              description={overview.error}
+            />
           )}
           {series.length === 0 ? (
-            <div className="col-span-full rounded-token border border-dashed border-border bg-transparent p-6 text-center text-token-sm text-muted-foreground">
-              No metrics available yet. They’ll appear once the API returns data.
-            </div>
+            <EmptyState
+              className="col-span-full"
+              title="No metrics available yet"
+              description="They’ll appear once the API returns data."
+            />
           ) : (
             series.map((m) => (
               <SparkStat
