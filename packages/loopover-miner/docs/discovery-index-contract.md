@@ -3,7 +3,7 @@
 The **discovery-index contract** is the typed request/response shape a miner uses to query the *optional* hosted
 discovery-index service. It is defined in `@loopover/engine`
 (`packages/loopover-engine/src/discovery-index-contract.ts`) so both sides — this repo's future server
-implementation ([#4250](https://github.com/JSONbored/gittensory/issues/4250), maintainer-only, explicitly blocked
+implementation ([#4250](https://github.com/JSONbored/loopover/issues/4250), maintainer-only, explicitly blocked
 on this contract) and any client — build against one shape.
 
 This is **schema/shape only**: no server, no deployed endpoint, no client HTTP implementation (those are #4250 and
@@ -12,7 +12,7 @@ the sibling soft-claim-coordination issue, respectively).
 ## Why
 
 The plane mitigates the rate-limit incident already fixed once for the review stack
-([#1936](https://github.com/JSONbored/gittensory/issues/1936)): *one* shared GitHub-metadata crawler across the
+([#1936](https://github.com/JSONbored/loopover/issues/1936)): *one* shared GitHub-metadata crawler across the
 miner fleet instead of every miner instance independently hammering the same repos' search/listing endpoints. The
 existing single-instance client pipeline (`packages/loopover-miner/lib/opportunity-fanout.js` +
 `opportunity-ranker.js`) is what a hosted version must stay compatible with, so the response candidate shape is

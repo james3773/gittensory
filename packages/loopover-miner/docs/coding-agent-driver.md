@@ -118,7 +118,7 @@ real house-rule enforcement for the live `agent-sdk` provider happens via `build
 attached directly in `constructProductionCodingAgentDriver`.
 
 **Metering:** `attempt-metering.ts`'s `accumulateAttemptUsage`/`evaluateAttemptBudget` are wired into
-`iterate-loop.ts` for real ([#5395](https://github.com/JSONbored/gittensory/issues/5395)) -- every iteration
+`iterate-loop.ts` for real ([#5395](https://github.com/JSONbored/loopover/issues/5395)) -- every iteration
 accumulates real `turns`/`costUsd`/`wallClockMs` (`tokens` stays an honest 0; no driver reports a real
 per-iteration token count today) into a running `AttemptMeterTotals`, and `runIterateLoop`'s optional
 `input.budget: AttemptBudget` is evaluated against it each iteration via the SAME `costCeilingReached` signal
@@ -133,7 +133,7 @@ which axis (if any) triggered an abandon, for an operator reading the attempt lo
 
 ## Related docs
 
-- [`operations-runbook.md`](operations-runbook.md) — SQLite `busy_timeout` concurrency, corruption recovery, multi-process collisions, post-upgrade migration ([#4875](https://github.com/JSONbored/gittensory/issues/4875)).
+- [`operations-runbook.md`](operations-runbook.md) — SQLite `busy_timeout` concurrency, corruption recovery, multi-process collisions, post-upgrade migration ([#4875](https://github.com/JSONbored/loopover/issues/4875)).
 - [`env-reference.md`](env-reference.md) — env vars including ledger path overrides.
 - [`../DEPLOYMENT.md`](../DEPLOYMENT.md) — laptop vs fleet deployment and state directory layout.
 - [`miner-goal-spec.md`](miner-goal-spec.md) — per-repo `.loopover-miner.yml` targeting policy.

@@ -1,9 +1,9 @@
 # Repo-agnostic capability audit — miner discovery / claim / scoring
 
 Audit of the `packages/loopover-miner` discovery, claim, and scoring code for hardcoded or
-implicitly gittensory-specific assumptions that would need to become per-tenant configuration before
+implicitly loopover-specific assumptions that would need to become per-tenant configuration before
 the loop can run against an arbitrary repo. This is the checklist deliverable for **#4780**; the
-follow-up **#4784** executes it (turning each open item below into config, gittensory's own values
+follow-up **#4784** executes it (turning each open item below into config, loopover's own values
 surviving only as the default). Audit-and-document only — no code changes here.
 
 ## Summary
@@ -18,9 +18,9 @@ caller-supplied, label preferences are generic per-tenant config (`.loopover-min
    search-qualifier syntax. This is the single largest gap for a non-GitHub tenant.
 2. **An existing forge-host override that isn't reachable from the CLI** — `opportunity-fanout` already
    accepts `apiBaseUrl` (GitHub Enterprise), but `discover-cli` never parses or threads it.
-3. **Engine-delegated gittensory *defaults*** — label taxonomy and the miner goal spec default to
-   gittensory's conventions in `@loopover/engine`; they are overridable, but the miner uses
-   the gittensory defaults out of the box unless a per-tenant config is supplied.
+3. **Engine-delegated loopover *defaults*** — label taxonomy and the miner goal spec default to
+   loopover's conventions in `@loopover/engine`; they are overridable, but the miner uses
+   the loopover defaults out of the box unless a per-tenant config is supplied.
 
 Everything else audited is already parameterized (see the last section) and needs no #4784 work.
 
@@ -52,7 +52,7 @@ whatever label strings the forge returns, with no `gittensor:*` filter. No chang
 
 | Line | Assumption | Category | Should become |
 | --- | --- | --- | --- |
-| 1–5 | imports `DEFAULT_MINER_GOAL_SPEC`, `parseMinerGoalSpecContent`, `rankMetadataOpportunities` from `@loopover/engine` | (3) scoring rubric | Ranking is engine-delegated and config-driven via `parseMinerGoalSpecContent`, but falls back to `DEFAULT_MINER_GOAL_SPEC` (gittensory's rubric) when no per-tenant goal spec is provided. #4784 should ensure a tenant goal spec is surfaced/required rather than silently defaulting. |
+| 1–5 | imports `DEFAULT_MINER_GOAL_SPEC`, `parseMinerGoalSpecContent`, `rankMetadataOpportunities` from `@loopover/engine` | (3) scoring rubric | Ranking is engine-delegated and config-driven via `parseMinerGoalSpecContent`, but falls back to `DEFAULT_MINER_GOAL_SPEC` (loopover's rubric) when no per-tenant goal spec is provided. #4784 should ensure a tenant goal spec is surfaced/required rather than silently defaulting. |
 
 ### `lib/feasibility-cli.js` — feasibility verdict (delegated)
 
@@ -64,7 +64,7 @@ whatever label strings the forge returns, with no `gittensor:*` filter. No chang
 
 | Location | Assumption | Category | Should become |
 | --- | --- | --- | --- |
-| `src/settings/pr-type-label.ts:26–28` | `DEFAULT_TYPE_LABELS = { bug: "gittensor:bug", feature: "gittensor:feature", priority: "gittensor:priority" }` | (1) label names | Already overridable per repo (`#label-modularity`), **default gittensory**. The miner inherits these defaults; #4784 should pass the tenant's label names through. |
+| `src/settings/pr-type-label.ts:26–28` | `DEFAULT_TYPE_LABELS = { bug: "gittensor:bug", feature: "gittensor:feature", priority: "gittensor:priority" }` | (1) label names | Already overridable per repo (`#label-modularity`), **default loopover**. The miner inherits these defaults; #4784 should pass the tenant's label names through. |
 
 ## Already parameterized — no #4784 change needed
 
@@ -72,7 +72,7 @@ These were checked and are already tenant-agnostic / config-driven; call them ou
 redo them:
 
 - **Discovery query** — caller-supplied via `discover --search <query>` or explicit `owner/repo`
-  targets; no hardcoded gittensory label query (`discover-cli.js`).
+  targets; no hardcoded loopover label query (`discover-cli.js`).
 - **Label preferences** — `.loopover-miner.yml` `preferredLabels` / `blockedLabels` are generic
   (`bug`, `enhancement`, `wontfix`, `duplicate`), not `gittensor:*`.
 - **Path scope, feasibility gate, self-plagiarism threshold, concurrency** — all per-tenant in
@@ -81,7 +81,7 @@ redo them:
 - **Runtime caps** — `.loopover-ams.yml` (`submissionMode`, `capLimits`, `convergenceThresholds`,
   `maxIterations`) are generic runtime knobs.
 - **Local stores** — `portfolio-queue`, `claim-ledger`, `event-ledger`, etc. are generic SQLite
-  bookkeeping with env-configurable DB paths; no gittensory-specific schema.
+  bookkeeping with env-configurable DB paths; no loopover-specific schema.
 
 ## Prioritized checklist for #4784
 
@@ -95,7 +95,7 @@ redo them:
   configurable (default `GITHUB_TOKEN`).
 - [x] **Medium — pass tenant label taxonomy + goal spec through (`opportunity-ranker.js`, engine
   `DEFAULT_TYPE_LABELS`):** ensure the miner supplies the tenant's labels / goal spec instead of
-  silently falling back to the gittensory defaults.
+  silently falling back to the loopover defaults.
 - [x] **Low — configurable user-agent (`opportunity-fanout.js:70`).**
 
 ## Resolution (#4784)

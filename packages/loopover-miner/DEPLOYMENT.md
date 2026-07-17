@@ -182,7 +182,7 @@ Want the dashboard too? [`systemd/loopover-miner-ui.service.example`](../../syst
 - Operators own secret injection; images and packages ship without embedded tokens.
 - AMS works against **any** GitHub repository — it does not require ORB installed, gittensor registration, or a `.loopover.yml` file on the target repo to function. Verified end to end (`init`, `doctor`, `discover <owner/repo>`) against real public repositories with no `.loopover.yml` and no gittensor registration, using only a plain `GITHUB_TOKEN`.
 
-See [`docs/operations-runbook.md`](docs/operations-runbook.md) for operational scenarios: ledger corruption, two miners on one state dir, and post-upgrade schema migration ([#4875](https://github.com/JSONbored/gittensory/issues/4875)).
+See [`docs/operations-runbook.md`](docs/operations-runbook.md) for operational scenarios: ledger corruption, two miners on one state dir, and post-upgrade schema migration ([#4875](https://github.com/JSONbored/loopover/issues/4875)).
 
 See [`docs/sizing.md`](docs/sizing.md) for measured CPU/RAM/disk numbers for laptop mode vs. fleet mode at
 different worker counts, with the exact commands used to reproduce them.
@@ -207,4 +207,4 @@ and `LOOPOVER_MINER_CONFIG_DIR` are covered above under the fleet/state notes; t
 
 ## Optional hosted discovery plane (opt-in)
 
-The Phase 6 **hosted discovery-index** is **off by default** — unlike Orb fleet export (`ORB_AIR_GAP` is the only opt-out). Operators who want cross-fleet metadata queries or soft-claim coordination must opt in explicitly. See [`docs/discovery-plane-operator-guide.md`](docs/discovery-plane-operator-guide.md) ([#4309](https://github.com/JSONbored/gittensory/issues/4309), placeholder until [#4300](https://github.com/JSONbored/gittensory/issues/4300) / [#4301](https://github.com/JSONbored/gittensory/issues/4301) / [#4302](https://github.com/JSONbored/gittensory/issues/4302) ship).
+The Phase 6 **hosted discovery-index** is **off by default** — unlike Orb fleet export (`ORB_AIR_GAP` is the only opt-out). Operators who want cross-fleet metadata queries or soft-claim coordination must opt in explicitly. See [`docs/discovery-plane-operator-guide.md`](docs/discovery-plane-operator-guide.md) ([#4309](https://github.com/JSONbored/loopover/issues/4309), placeholder until [#4300](https://github.com/JSONbored/loopover/issues/4300) / [#4301](https://github.com/JSONbored/loopover/issues/4301) / [#4302](https://github.com/JSONbored/loopover/issues/4302) ship).

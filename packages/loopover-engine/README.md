@@ -221,7 +221,7 @@ import {
 
 const gateVerdicts = ingestGateVerdictCalibrationSignals([
   {
-    repoFullName: "jsonbored/gittensory",
+    repoFullName: "jsonbored/loopover",
     replayRunId: "replay-2026-07-04",
     gateRunId: "gate-123",
     optedIn: true,
@@ -364,7 +364,7 @@ const summary = computeTrackRecordSummary({
   now: "2026-07-04T18:00:00Z",
   outcomes: [
     {
-      repoFullName: "JSONbored/gittensory",
+      repoFullName: "JSONbored/loopover",
       authorLogin: "octo-miner",
       state: "merged",
       createdAt: "2026-06-01T00:00:00Z",
@@ -414,7 +414,7 @@ import {
 
 const findingSeverity = ingestFindingSeverityCalibrationSignals([
   {
-    repoFullName: "jsonbored/gittensory",
+    repoFullName: "jsonbored/loopover",
     replayRunId: "replay-2026-07-04",
     reviewRunId: "review-123",
     optedIn: true,
@@ -482,7 +482,7 @@ import {
 
 const reviewerConsensus = ingestReviewerConsensusCalibrationSignals([
   {
-    repoFullName: "jsonbored/gittensory",
+    repoFullName: "jsonbored/loopover",
     replayRunId: "replay-2026-07-05",
     reviewRunId: "review-123",
     optedIn: true,

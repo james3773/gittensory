@@ -6,7 +6,7 @@
 
 Operator-facing runbook for **local SQLite state**: what the concurrency guarantees actually mean, how to recover from corruption, what to do when two miner processes collide on the same files, and how schema upgrades migrate your on-disk ledgers after a package update.
 
-> **Scope:** AMS local stores only. For laptop/fleet deployment layout see [`../DEPLOYMENT.md`](../DEPLOYMENT.md). For Grafana setup see [#5190](https://github.com/JSONbored/gittensory/issues/5190). For the optional hosted discovery plane see [`discovery-plane-operator-guide.md`](discovery-plane-operator-guide.md). This runbook does **not** cover the self-hosted **review stack** (Orb/API/LoopoverDB).
+> **Scope:** AMS local stores only. For laptop/fleet deployment layout see [`../DEPLOYMENT.md`](../DEPLOYMENT.md). For Grafana setup see [#5190](https://github.com/JSONbored/loopover/issues/5190). For the optional hosted discovery plane see [`discovery-plane-operator-guide.md`](discovery-plane-operator-guide.md). This runbook does **not** cover the self-hosted **review stack** (Orb/API/LoopoverDB).
 
 ## Local state at a glance
 
@@ -193,7 +193,7 @@ Append-only stores **do not repair individual bad rows** in place — corrupted 
 
 **How upgrades work**
 
-Stores use the lightweight **`schema-version.js`** convention ([#4832](https://github.com/JSONbored/gittensory/issues/4832)):
+Stores use the lightweight **`schema-version.js`** convention ([#4832](https://github.com/JSONbored/loopover/issues/4832)):
 
 - Bootstrap `CREATE TABLE IF NOT EXISTS …` is schema **version 1** (`BASELINE_SCHEMA_VERSION`).
 - Each store may register post-baseline migrations; `applySchemaMigrations` runs pending steps on **every open**.
@@ -245,5 +245,5 @@ Stores use the lightweight **`schema-version.js`** convention ([#4832](https://g
 - [`../README.md`](../README.md#local-storage) — store inventory
 - [`env-reference.md`](env-reference.md) — per-store path overrides
 - [`coding-agent-driver.md`](coding-agent-driver.md) — attempt log semantics
-- [#5190](https://github.com/JSONbored/gittensory/issues/5190) — Grafana + SQLite ledgers (observability doc)
+- [#5190](https://github.com/JSONbored/loopover/issues/5190) — Grafana + SQLite ledgers (observability doc)
 - [`discovery-plane-operator-guide.md`](discovery-plane-operator-guide.md) — optional hosted plane (distinct from local ledger ops)

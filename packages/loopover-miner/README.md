@@ -53,7 +53,7 @@ throws, and per its acceptance criteria **fails closed** — a repo with no reco
 `{ detected: false, reason }` and a command that can't be inferred without guessing stays `null`, rather than being
 assumed. The attempt path consumes it: `buildCodingTaskSpec` appends the real stack summary (and any
 confidently-inferred build/test/lint/format commands) to the coding-agent instructions so validation uses
-the target repo's own tooling rather than assuming LoopOver's own CI conventions ([#4786](https://github.com/JSONbored/gittensory/issues/4786)). (#4785)
+the target repo's own tooling rather than assuming LoopOver's own CI conventions ([#4786](https://github.com/JSONbored/loopover/issues/4786)). (#4785)
 
 The package also includes an append-only governor decision ledger: `initGovernorLedger` / `appendGovernorEvent`
 persist structured allow/deny/throttle/kill-switch outcomes in local SQLite for contributor audit. Insert-only —
@@ -159,13 +159,13 @@ enough (e.g. a live-polling dashboard) that the per-read linear event-ledger sca
 
 See [`docs/miner-goal-spec.md`](docs/miner-goal-spec.md) for the `.loopover-miner.yml` field reference and [`.loopover-miner.yml.example`](../../.loopover-miner.yml.example) at the repo root.
 
-See [`docs/cross-repo-discovery-phase1.md`](docs/cross-repo-discovery-phase1.md) for the Phase 1 cross-repo discovery scope (re-scoped from [#1060](https://github.com/JSONbored/gittensory/issues/1060), paper trail for [#2299](https://github.com/JSONbored/gittensory/issues/2299)).
+See [`docs/cross-repo-discovery-phase1.md`](docs/cross-repo-discovery-phase1.md) for the Phase 1 cross-repo discovery scope (re-scoped from [#1060](https://github.com/JSONbored/loopover/issues/1060), paper trail for [#2299](https://github.com/JSONbored/loopover/issues/2299)).
 
-See [`docs/discovery-plane-operator-guide.md`](docs/discovery-plane-operator-guide.md) for the optional hosted discovery-index plane (opt-in default OFF; contrasts with Orb's opt-out-only export — [#4309](https://github.com/JSONbored/gittensory/issues/4309)).
+See [`docs/discovery-plane-operator-guide.md`](docs/discovery-plane-operator-guide.md) for the optional hosted discovery-index plane (opt-in default OFF; contrasts with Orb's opt-out-only export — [#4309](https://github.com/JSONbored/loopover/issues/4309)).
 
 See [`DEPLOYMENT.md`](DEPLOYMENT.md) for laptop vs fleet deployment.
 
-See [`docs/operations-runbook.md`](docs/operations-runbook.md) for SQLite concurrency guarantees, corruption recovery, multi-process collision response, and post-upgrade ledger migration ([#4875](https://github.com/JSONbored/gittensory/issues/4875)).
+See [`docs/operations-runbook.md`](docs/operations-runbook.md) for SQLite concurrency guarantees, corruption recovery, multi-process collision response, and post-upgrade ledger migration ([#4875](https://github.com/JSONbored/loopover/issues/4875)).
 
 See [`docs/sizing.md`](docs/sizing.md) for measured CPU/RAM/disk numbers across laptop mode and fleet mode at
 different worker counts.
