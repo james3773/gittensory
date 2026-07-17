@@ -31,7 +31,16 @@ export function MessageList({
         errorTitle="Couldn't load the conversation"
         errorDescription="The conversation source did not respond. Retry, or check back once it has recovered."
       >
-        <ol className="flex flex-col gap-4 p-3">
+        {/*
+          #7081: the message list is a polite ARIA live region so assistive tech announces each completed turn
+          even when the user has moved focus out of the list. `messages` gains a committed entry exactly once per
+          turn — conversation.tsx appends the finished answer only after StreamingText's per-chunk accumulation
+          resolves, never mid-stream, and the live StreamingText render lives OUTSIDE this list — so each new
+          message announces once, never once-per-streaming-chunk. `aria-relevant="additions"` keeps it to newly
+          appended messages; StateBoundary's own loading/empty/error status/alert regions are separate and
+          untouched (an added message can't reach here in those branches anyway).
+        */}
+        <ol className="flex flex-col gap-4 p-3" aria-live="polite" aria-relevant="additions">
           {messages.map((message) => (
             <li key={message.id}>
               <MessageBubble message={message} />

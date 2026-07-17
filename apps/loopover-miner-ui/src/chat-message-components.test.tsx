@@ -42,6 +42,50 @@ describe("MessageList (#6515) — StateBoundary branches", () => {
   });
 });
 
+describe("MessageList (#7081) — message list is a polite live region for completed turns", () => {
+  it("marks the message-list container as a polite additions-only live region", () => {
+    render(<MessageList messages={multiTurnConversation} />);
+    const list = screen.getByRole("list");
+    expect(list.getAttribute("aria-live")).toBe("polite");
+    // Polite (not assertive): chat answers are not interrupting content; additions-only so removals stay silent.
+    expect(list.getAttribute("aria-relevant")).toBe("additions");
+  });
+
+  it("appends exactly one announceable node per completed turn", () => {
+    const question: ChatMessage[] = [
+      { id: "u1", role: "user", content: "what's stuck?", timestamp: "2026-07-16T08:00:00.000Z" },
+    ];
+    const { rerender } = render(<MessageList messages={question} />);
+    expect(screen.getAllByRole("listitem")).toHaveLength(1);
+
+    // The completed assistant turn adds a single new list item into the live region -> one announcement.
+    const answered: ChatMessage[] = [
+      ...question,
+      { id: "a1", role: "assistant", content: "first answer", timestamp: "2026-07-16T08:00:01.000Z" },
+    ];
+    rerender(<MessageList messages={answered} />);
+    expect(screen.getAllByRole("listitem")).toHaveLength(2);
+    expect(screen.getByText("first answer")).toBeTruthy();
+
+    // The next completed turn adds exactly one more — never a burst, because streaming chunks (rendered by the
+    // separate StreamingText outside this list) never mutate `messages`.
+    const reAnswered: ChatMessage[] = [
+      ...answered,
+      { id: "u2", role: "user", content: "and now?", timestamp: "2026-07-16T08:00:02.000Z" },
+      { id: "a2", role: "assistant", content: "second answer", timestamp: "2026-07-16T08:00:03.000Z" },
+    ];
+    rerender(<MessageList messages={reAnswered} />);
+    expect(screen.getAllByRole("listitem")).toHaveLength(4);
+    expect(screen.getByText("second answer")).toBeTruthy();
+  });
+
+  it("leaves StateBoundary's own loading status region intact (no list live region rendered while loading)", () => {
+    render(<MessageList messages={emptyConversation} isLoading />);
+    expect(screen.getByText(/Loading conversation/i)).toBeTruthy();
+    expect(screen.queryByRole("list")).toBeNull();
+  });
+});
+
 describe("MessageBubble (#6515) — role-color + avatar branches", () => {
   const base: ChatMessage = {
     id: "x",
