@@ -94,6 +94,7 @@ const CLI_COMMAND_SPEC = {
   "lint-pr-text": [],
   "validate-config": [],
   "slop-risk": [],
+  "improvement-potential": [],
   "issue-slop": [],
   profile: ["list", "create", "switch", "remove"],
   cache: ["status", "clear", "list"],
@@ -3224,6 +3225,7 @@ async function runCli(args) {
   if (command === "lint-pr-text") return lintPrTextCli(args.slice(1));
   if (command === "validate-config") return validateConfigCli(args.slice(1));
   if (command === "slop-risk") return slopRiskCli(args.slice(1));
+  if (command === "improvement-potential") return improvementPotentialCli(args.slice(1));
   if (command === "issue-slop") return issueSlopCli(args.slice(1));
   if (command === "decision-pack") return decisionPackCli(options);
   if (command === "repo-decision") return repoDecisionCli(options);
@@ -3521,6 +3523,51 @@ async function slopRiskCli(args) {
   // #6261: the whole payload is the API's, so the score line is sanitized alongside the findings -- leaving `band`
   // raw would keep this exact command exploitable by the exact response the findings are being protected from.
   process.stdout.write(`Slop risk: ${sanitizePlainTextTerminalOutput(payload.slopRisk)} (${sanitizePlainTextTerminalOutput(payload.band)})\n`);
+  for (const finding of payload.findings ?? [])
+    process.stdout.write(`- ${sanitizePlainTextTerminalOutput(finding.title)}: ${sanitizePlainTextTerminalOutput(finding.detail)}\n`);
+}
+
+function printImprovementPotentialHelp() {
+  process.stdout.write(
+    [
+      "Usage: loopover-mcp improvement-potential [--changed-file <path[:additions:deletions]>]... [--test <command>]... [--test-file <path>]... [--patch-coverage-delta <percent>] [--json]",
+      "",
+      "Assess deterministic structural-improvement potential from local diff metadata.",
+      "Mirrors the loopover_check_improvement_potential MCP tool and POST /v1/lint/improvement-potential. No source upload.",
+      "",
+      "Pass --json for machine-readable output.",
+    ].join("\n") + "\n",
+  );
+}
+
+async function improvementPotentialCli(args) {
+  // #6748: shell CLI mirror of loopover_check_improvement_potential, matching slopRiskCli's HTTP-proxy pattern
+  // (the pure builder lives in src/signals/improvement.ts, not yet an @loopover/engine export for in-process use).
+  if (!args.length || args[0] === "--help" || args[0] === "help") return printImprovementPotentialHelp();
+  const options = parseOptions(args);
+  const changedFiles = stringArrayOption(options.changedFile).map(parseChangedFileSpec);
+  const tests = stringArrayOption(options.test);
+  const testFiles = stringArrayOption(options.testFile);
+  let patchCoverageDeltaPercent;
+  if (options.patchCoverageDelta !== undefined) {
+    patchCoverageDeltaPercent = Number(options.patchCoverageDelta);
+    if (!Number.isFinite(patchCoverageDeltaPercent)) {
+      throw new Error("--patch-coverage-delta must be a finite number");
+    }
+  }
+  const payload = await apiPost("/v1/lint/improvement-potential", {
+    ...(changedFiles.length ? { changedFiles } : {}),
+    ...(tests.length ? { tests } : {}),
+    ...(testFiles.length ? { testFiles } : {}),
+    ...(patchCoverageDeltaPercent !== undefined ? { patchCoverageDeltaPercent } : {}),
+  });
+  if (options.json) {
+    process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
+    return;
+  }
+  process.stdout.write(
+    `Improvement potential: ${sanitizePlainTextTerminalOutput(payload.improvementScore)} (${sanitizePlainTextTerminalOutput(payload.band)})\n`,
+  );
   for (const finding of payload.findings ?? [])
     process.stdout.write(`- ${sanitizePlainTextTerminalOutput(finding.title)}: ${sanitizePlainTextTerminalOutput(finding.detail)}\n`);
 }
@@ -4110,6 +4157,7 @@ function printHelp() {
   loopover-mcp lint-pr-text [--commit <message>]... [--body <text>] [--body-file <path>] [--linked-issue <number>] [--json]
   loopover-mcp validate-config --file <path> [--source repo_file|api_record|none] [--json]
   loopover-mcp slop-risk [--description <text>] [--description-file <path>] [--changed-file <path[:additions:deletions]>]... [--test <command>]... [--test-file <path>]... [--json]
+  loopover-mcp improvement-potential [--changed-file <path[:additions:deletions]>]... [--test <command>]... [--test-file <path>]... [--patch-coverage-delta <percent>] [--json]
   loopover-mcp issue-slop [--title <text>] [--body <text>] [--body-file <path>] [--json]
   loopover-mcp agent plan --login <github-login> [--repo owner/repo] [--json]
   loopover-mcp agent status <run-id> [--json]

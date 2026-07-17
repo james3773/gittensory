@@ -380,6 +380,16 @@ export async function startFixtureServer(
       response.end(JSON.stringify(withTerminalInjection(slopRiskFixture(body), options.terminalInjection)));
       return;
     }
+    if (request.url === "/v1/lint/improvement-potential" && request.method === "POST") {
+      const body = (await readJsonRequest(request)) as {
+        changedFiles?: Array<{ path: string; additions?: number; deletions?: number }>;
+        tests?: string[];
+        testFiles?: string[];
+        patchCoverageDeltaPercent?: number;
+      };
+      response.end(JSON.stringify(withTerminalInjection(improvementPotentialFixture(body), options.terminalInjection)));
+      return;
+    }
     if (request.url === "/v1/lint/issue-slop" && request.method === "POST") {
       const body = (await readJsonRequest(request)) as { title?: string; body?: string };
       response.end(JSON.stringify(withTerminalInjection(issueSlopFixture(body), options.terminalInjection)));
@@ -877,6 +887,52 @@ export function slopRiskFixture(input: {
     findings,
     rubric: "Fixture slop rubric.",
   };
+}
+
+/** #6748: fixture for POST /v1/lint/improvement-potential — mirrors a mild positive signal when tests accompany code. */
+export function improvementPotentialFixture(input: {
+  changedFiles?: Array<{ path: string; additions?: number; deletions?: number }>;
+  tests?: string[];
+  testFiles?: string[];
+  patchCoverageDeltaPercent?: number;
+} = {}) {
+  const changedFiles = input.changedFiles ?? [];
+  const hasCodeChange = changedFiles.some((file) => /\.(ts|tsx|js|jsx)$/i.test(file.path) && !file.path.includes(".test."));
+  const hasTestEvidence =
+    changedFiles.some((file) => file.path.includes(".test.")) || (input.testFiles?.length ?? 0) > 0 || (input.tests?.length ?? 0) > 0;
+  const coverageUp = typeof input.patchCoverageDeltaPercent === "number" && input.patchCoverageDeltaPercent > 0;
+  if (!hasCodeChange && !coverageUp) {
+    return { improvementScore: 0, band: "insufficient-signal", findings: [] };
+  }
+  if (hasCodeChange && hasTestEvidence) {
+    return {
+      improvementScore: 10,
+      band: "minor",
+      findings: [
+        {
+          code: "added_test_evidence",
+          title: "Added test evidence",
+          severity: "info",
+          detail: "Fixture: code change accompanied by tests.",
+        },
+      ],
+    };
+  }
+  if (coverageUp) {
+    return {
+      improvementScore: 20,
+      band: "minor",
+      findings: [
+        {
+          code: "increased_patch_coverage",
+          title: "Increased patch coverage",
+          severity: "info",
+          detail: "Fixture: patch coverage delta is positive.",
+        },
+      ],
+    };
+  }
+  return { improvementScore: 0, band: "none", findings: [] };
 }
 
 export function issueSlopFixture(input: { title?: string; body?: string } = {}) {

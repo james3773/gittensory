@@ -201,6 +201,7 @@ import { runFindOpportunities, validateFindOpportunitiesInput, type FindOpportun
 import { runIssueRagRetrieval, validateIssueRagInput, type IssueRagInput } from "../mcp/issue-rag";
 import { buildBoundaryTestGenerationFinding, buildBoundaryTestGenerationSpec } from "../signals/boundary-test-generation";
 import { buildTestEvidenceReport } from "../signals/test-evidence";
+import { buildStructuralImprovementAssessment } from "../signals/improvement";
 import { evaluateEscalation } from "../loop-escalation";
 import { buildResultsPayload } from "../results-payload";
 import { buildProgressSnapshot } from "../loop-progress";
@@ -577,6 +578,42 @@ const slopRiskSchema = z.object({
   commitMessages: z.array(z.string().max(2000)).max(200).optional(),
   hasLinkedIssue: z.boolean().optional(),
   issueDiscoveryLane: z.boolean().optional(),
+});
+
+// #6748: mirrors checkImprovementPotentialShape in src/mcp/server.ts VERBATIM (same bounds, same optionality)
+// so the REST surface can never accept an input the MCP tool would reject, or vice versa.
+const improvementPotentialSchema = z.object({
+  changedFiles: z
+    .array(z.object({ path: z.string().min(1).max(400), additions: z.number().int().min(0).optional(), deletions: z.number().int().min(0).optional() }))
+    .max(2000)
+    .optional(),
+  tests: z.array(z.string().max(400)).max(2000).optional(),
+  testFiles: z.array(z.string().max(400)).max(2000).optional(),
+  patchCoverageDeltaPercent: z.number().optional(),
+  complexityDeltas: z
+    .array(
+      z.object({
+        file: z.string().min(1).max(400),
+        line: z.number().int().min(1),
+        name: z.string().min(1).max(400),
+        before: z.number().int().min(0),
+        after: z.number().int().min(0),
+        delta: z.number().int(),
+      }),
+    )
+    .max(2000)
+    .optional(),
+  duplicationDeltas: z
+    .array(
+      z.object({
+        file: z.string().min(1).max(400),
+        line: z.number().int().min(1),
+        duplicateOfLine: z.number().int().min(1),
+        lines: z.number().int().min(1),
+      }),
+    )
+    .max(2000)
+    .optional(),
 });
 const issueSlopSchema = z.object({
   title: z.string().max(500).optional(),
@@ -3304,6 +3341,17 @@ export function createApp() {
     const parsed = slopRiskSchema.safeParse(body);
     if (!parsed.success) return c.json({ error: "invalid_slop_risk_request", issues: parsed.error.issues }, 400);
     return c.json({ ...buildSlopAssessment(parsed.data), rubric: SLOP_RUBRIC_MARKDOWN });
+  });
+
+  // #6748: REST mirror of the loopover_check_improvement_potential MCP tool, bringing it to the same parity its
+  // same-tier sibling /v1/lint/slop-risk (directly above) already has. Both are pure, source-free evaluators over
+  // caller-supplied local-diff metadata, so this route delegates to the same buildStructuralImprovementAssessment
+  // the tool calls and adds no logic of its own. Advisory-only — improvementScore never gates.
+  app.post("/v1/lint/improvement-potential", async (c) => {
+    const body = await c.req.json().catch(() => null);
+    const parsed = improvementPotentialSchema.safeParse(body);
+    if (!parsed.success) return c.json({ error: "invalid_improvement_potential_request", issues: parsed.error.issues }, 400);
+    return c.json(buildStructuralImprovementAssessment(parsed.data));
   });
 
   // #6751: REST mirror of the loopover_simulate_open_pr_pressure MCP tool — deterministic, public-safe, and
