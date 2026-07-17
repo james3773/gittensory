@@ -242,6 +242,38 @@ describe("runLoop (#5135)", () => {
     expect(printed).toContain("No discovery, queue, or ledger writes were made.");
   });
 
+  it("REGRESSION: exhausting --max-cycles releases the primed claim instead of stranding it in_progress (#6763)", async () => {
+    const { eventLedger, governorLedger, portfolioQueue, runState, governorState, paths } = tempStores();
+    // A non-empty queue: the initial priming dequeues this item (flipping it to 'in_progress') BEFORE the
+    // while-condition rejects maxCycles=0, so no cycle ever processes or releases it.
+    portfolioQueue.enqueue({ repoFullName: "acme/widgets", identifier: "issue:1", priority: 0 });
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const runAttemptSpy = vi.fn();
+
+    const exitCode = await runLoop(["acme/widgets", "--miner-login", "alice", "--json", "--max-cycles", "0"], {
+      openGovernorState: () => governorState,
+      initEventLedger: () => eventLedger,
+      initGovernorLedger: () => governorLedger,
+      initPortfolioQueue: () => portfolioQueue,
+      initRunStateStore: () => runState,
+      runDiscover: vi.fn(async () => 0),
+      runAttempt: runAttemptSpy,
+      ...readyLoopOptions(),
+    });
+
+    expect(exitCode).toBe(0);
+    expect(runAttemptSpy).not.toHaveBeenCalled();
+    const printed = JSON.parse(String(log.mock.calls[0]?.[0]));
+    expect(printed.haltReason).toBe("max_cycles_reached");
+
+    // Before the fix the row stayed 'in_progress' forever: dequeueNext() only pulls 'queued' rows, so no
+    // future loop/attempt run could ever see it again (only an out-of-band stale-lease sweep could).
+    const after = reopenAfterRun(paths);
+    expect(after.portfolioQueue.listQueue("acme/widgets")).toEqual([
+      expect.objectContaining({ identifier: "issue:1", status: "queued" }),
+    ]);
+  });
+
   it("halts immediately on an active kill switch, before running discovery or any attempt", async () => {
     const { eventLedger, governorLedger, portfolioQueue, runState, governorState } = tempStores();
     const log = vi.spyOn(console, "log").mockImplementation(() => undefined);

@@ -561,6 +561,14 @@ export async function runLoop(args, options = {}) {
 
     if (haltReason === null && parsed.maxCycles !== undefined) {
       haltReason = "max_cycles_reached";
+      // The next cycle's item is primed (dequeued → 'in_progress') BEFORE the while-condition re-checks
+      // maxCycles -- both at the initial priming above and at each cycle's tail -- so exhausting maxCycles
+      // ends the run holding a claim no cycle ever processed. Release it, mirroring the kill-switch/pause
+      // halts (#5670): dequeueNext() only pulls 'queued' rows, so an unreleased claim is invisible to every
+      // future loop/attempt run until an out-of-band stale-lease sweep reclaims it.
+      if (claimed) {
+        portfolioQueue.markFailed(claimed.repoFullName, claimed.identifier, claimed.apiBaseUrl);
+      }
     }
 
     const summary = { haltReason, cyclesRun: cycles.length, cycles };
