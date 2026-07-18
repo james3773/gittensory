@@ -223,7 +223,7 @@ jobs:
     needs: release-please
     if: ${{ !cancelled() }}
     environment: release
-    timeout-minutes: 25
+    timeout-minutes: 35
     permissions:
       contents: read
       actions: write
@@ -258,10 +258,34 @@ jobs:
 
           dispatch_and_wait() {
             local workflow="$1"
-            gh workflow run "$workflow" --repo "$GITHUB_REPOSITORY"
-            sleep 8
-            local run_id
-            run_id="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow "$workflow" --limit 1 --json databaseId --jq '.[0].databaseId')"
+            # `gh run list --limit 1` right after dispatch is NOT reliable for finding the run just
+            # created: it can return a DIFFERENT, already-completed run from before this dispatch if
+            # the new one hasn't been indexed by the API yet (confirmed live: the first version of
+            # this job grabbed a stale prior run, reported its old "success", and silently never
+            # published the new version at all -- packages/loopover-engine committed 3.2.3 while npm
+            # still had 3.2.2, undetected until a human happened to check the actual log output).
+            #
+            # `gh workflow run`'s own stdout prints the created run's URL ("if available" per its
+            # --help) -- parse the run ID directly from THAT first, since it's the actual identity of
+            # what was just dispatched, not a guess. Falls back to polling for a run created after
+            # `before_ts` only on the rare case the URL wasn't returned.
+            local before_ts run_id dispatch_output
+            before_ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            dispatch_output="$(gh workflow run "$workflow" --repo "$GITHUB_REPOSITORY" 2>&1)"
+            echo "$dispatch_output"
+            run_id="$(printf '%s' "$dispatch_output" | grep -oE '/runs/[0-9]+' | grep -oE '[0-9]+' | tail -1 || true)"
+            if [ -z "$run_id" ]; then
+              echo "No run URL in dispatch output; polling for a run created after $before_ts..."
+              for _attempt in $(seq 1 30); do
+                sleep 5
+                run_id="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow "$workflow" --limit 5 --json databaseId,createdAt --jq "[.[] | select(.createdAt > \"$before_ts\")] | sort_by(.createdAt) | .[0].databaseId // empty")"
+                if [ -n "$run_id" ]; then break; fi
+              done
+            fi
+            if [ -z "$run_id" ]; then
+              echo "::error::Could not identify the run just dispatched for $workflow."
+              return 1
+            fi
             echo "Dispatched $workflow as run $run_id, waiting for it to complete..."
             while [ "$(gh run view "$run_id" --repo "$GITHUB_REPOSITORY" --json status --jq '.status')" != "completed" ]; do
               sleep 15
@@ -272,17 +296,45 @@ jobs:
             [ "$conclusion" = "success" ]
           }
 
+          # mcp/miner's own isolated pack/smoke-test step resolves @loopover/engine from the real npm
+          # registry in a bare temp dir (no local workspace symlink there), so it can transiently fail
+          # with ETARGET for a few tens of seconds after engine's OWN publish reports success --
+          # npm's registry is CDN-backed, not instantly consistent across every edge node (confirmed
+          # live: dispatching mcp and miner back-to-back right after engine's publish job completed,
+          # mcp's smoke-test hit an edge node that had already propagated and succeeded; miner's hit
+          # one that hadn't and failed with the exact same ETARGET this whole job exists to fix,
+          # despite both being dispatched at the same moment against the same already-published
+          # engine version). Retrying after a short wait resolves it once propagation catches up --
+          # this is NOT the same failure class as a genuine test regression, which would fail
+          # identically on every retry.
+          dispatch_and_wait_with_retry() {
+            local workflow="$1" max_attempts=3 attempt=1
+            while [ "$attempt" -le "$max_attempts" ]; do
+              if dispatch_and_wait "$workflow"; then
+                return 0
+              fi
+              echo "$workflow attempt $attempt/$max_attempts did not succeed -- likely npm registry propagation lag for a dependency that just published; retrying shortly."
+              sleep 30
+              attempt=$((attempt + 1))
+            done
+            return 1
+          }
+
           engine_ok=true
           if needs_publish packages/loopover-engine @loopover/engine; then
             dispatch_and_wait publish-engine.yml || engine_ok=false
+            if [ "$engine_ok" = "true" ]; then
+              echo "Waiting for npm registry propagation before publishing engine's dependents..."
+              sleep 30
+            fi
           fi
 
           if [ "$engine_ok" = "true" ]; then
             if needs_publish packages/loopover-mcp @loopover/mcp; then
-              dispatch_and_wait publish-mcp.yml || echo "::warning::publish-mcp.yml did not succeed -- left for manual follow-up."
+              dispatch_and_wait_with_retry publish-mcp.yml || echo "::warning::publish-mcp.yml did not succeed after retries -- left for manual follow-up."
             fi
             if needs_publish packages/loopover-miner @loopover/miner; then
-              dispatch_and_wait publish-miner.yml || echo "::warning::publish-miner.yml did not succeed -- left for manual follow-up."
+              dispatch_and_wait_with_retry publish-miner.yml || echo "::warning::publish-miner.yml did not succeed after retries -- left for manual follow-up."
             fi
           else
             echo "::warning::Skipping mcp/miner reconciliation -- publish-engine.yml did not succeed, and they depend on it."
