@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { captureScrollFrames, captureShot, handleShot } from "../../src/review/visual/shot";
+import { captureInteractionFrames, captureScrollFrames, captureShot, handleShot } from "../../src/review/visual/shot";
 
 const mocks = vi.hoisted(() => ({
   finalUrl: "https://preview.pages.dev/page",
@@ -11,6 +11,9 @@ const mocks = vi.hoisted(() => ({
   emulateMediaFeatures: vi.fn(async () => undefined),
   reload: vi.fn(async () => undefined),
   evaluate: vi.fn(),
+  waitForSelector: vi.fn(),
+  hover: vi.fn(async () => undefined),
+  click: vi.fn(async () => undefined),
   // captureScrollFrames' FIRST page.evaluate() call queries scrollHeight; every later call (scrollTo, the
   // settle delay) discards its return value — so only the first call's resolved value matters to the code
   // under test, regardless of exactly how many scroll/settle evaluate() calls happen after it. captureShot's
@@ -588,6 +591,121 @@ describe("captureScrollFrames (#3612 scroll-through GIF evidence)", () => {
     expect(result).toEqual({ frames: [], authWalled: false });
     expect(mocks.abort).toHaveBeenCalled();
     expect(mocks.screenshot).not.toHaveBeenCalled();
+  });
+});
+
+describe("captureInteractionFrames (#interaction-gif-capture)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.finalUrl = "https://preview.pages.dev/page";
+    mocks.evaluateCallCount = 0;
+    mocks.waitForSelector.mockResolvedValue({ hover: mocks.hover, click: mocks.click });
+    mocks.evaluate.mockImplementation(async (fn: (...fnArgs: unknown[]) => unknown, ...fnArgs: unknown[]) => {
+      mocks.evaluateCallCount++;
+      try {
+        fn(...fnArgs);
+      } catch {
+        // expected — see the shared mock comment above.
+      }
+      return undefined;
+    });
+    mocks.launch.mockImplementation(async () => {
+      let onRequest: ((request: ReturnType<typeof makeRequest>) => void) | undefined;
+      return {
+        newPage: async () => ({
+          setRequestInterception: vi.fn(async () => undefined),
+          on: vi.fn((event: string, callback: (request: ReturnType<typeof makeRequest>) => void) => {
+            if (event === "request") onRequest = callback;
+          }),
+          setViewport: vi.fn(async () => undefined),
+          emulateMediaFeatures: mocks.emulateMediaFeatures,
+          goto: vi.fn(async (url: string) => {
+            onRequest?.(makeRequest(url));
+            if (mocks.finalUrl !== url) onRequest?.(makeRequest(mocks.finalUrl));
+          }),
+          reload: mocks.reload,
+          url: vi.fn(() => mocks.finalUrl),
+          screenshot: mocks.screenshot,
+          evaluate: mocks.evaluate,
+          waitForSelector: mocks.waitForSelector,
+        }),
+        close: mocks.close,
+      };
+    });
+  });
+
+  it("rejects an unsafe target before launching the browser", async () => {
+    const result = await captureInteractionFrames(env(), "http://127.0.0.1/admin", ".x", "hover", { width: 1440, height: 900 });
+    expect(result).toEqual({ frames: [], authWalled: false });
+    expect(mocks.launch).not.toHaveBeenCalled();
+  });
+
+  it("captures an at-rest frame plus MAX_INTERACTION_STEPS-1 post-interaction frames for a hover", async () => {
+    const result = await captureInteractionFrames(env(), "https://preview.pages.dev/page", ".blocks-row", "hover", { width: 1440, height: 900 });
+    expect(result.authWalled).toBe(false);
+    expect(result.frames).toHaveLength(4);
+    expect(mocks.screenshot).toHaveBeenCalledTimes(4);
+    expect(mocks.screenshot).toHaveBeenCalledWith({ type: "png", fullPage: false });
+    expect(mocks.hover).toHaveBeenCalledTimes(1);
+    expect(mocks.click).not.toHaveBeenCalled();
+  });
+
+  it("clicks (not hovers) the element when action is 'click'", async () => {
+    const result = await captureInteractionFrames(env(), "https://preview.pages.dev/page", "#menu-button", "click", { width: 1440, height: 900 });
+    expect(result.frames).toHaveLength(4);
+    expect(mocks.click).toHaveBeenCalledTimes(1);
+    expect(mocks.hover).not.toHaveBeenCalled();
+  });
+
+  it("returns no frames (fails open) when the selector matches nothing on the page", async () => {
+    mocks.waitForSelector.mockResolvedValue(null);
+    const result = await captureInteractionFrames(env(), "https://preview.pages.dev/page", ".does-not-exist", "hover", { width: 1440, height: 900 });
+    expect(result).toEqual({ frames: [], authWalled: false });
+    expect(mocks.screenshot).not.toHaveBeenCalled();
+  });
+
+  it("returns no frames when there is no BROWSER binding", async () => {
+    const result = await captureInteractionFrames({} as Env, "https://preview.pages.dev/page", ".x", "hover", { width: 1440, height: 900 });
+    expect(result).toEqual({ frames: [], authWalled: false });
+    expect(mocks.launch).not.toHaveBeenCalled();
+  });
+
+  it("emulates prefers-color-scheme when a theme is requested, same as captureScrollFrames/captureShot", async () => {
+    await captureInteractionFrames(env(), "https://preview.pages.dev/page", ".x", "hover", { width: 1440, height: 900 }, { theme: "dark" });
+    expect(mocks.emulateMediaFeatures).toHaveBeenCalledWith([{ name: "prefers-color-scheme", value: "dark" }]);
+  });
+
+  it("forces the theme via localStorage.setItem + reload when both theme and themeStorageKey are set, mirroring captureScrollFrames (#4109)", async () => {
+    await captureInteractionFrames(env(), "https://preview.pages.dev/page", ".x", "hover", { width: 1440, height: 900 }, { theme: "dark", themeStorageKey: "theme" });
+    expect(mocks.evaluate).toHaveBeenCalledWith(expect.any(Function), "theme", "dark");
+    expect(mocks.reload).toHaveBeenCalledWith({ waitUntil: "networkidle0", timeout: 20000 });
+  });
+
+  it("flags authWalled and captures no frames on a login-page redirect", async () => {
+    mocks.finalUrl = "https://preview.pages.dev/login";
+    const result = await captureInteractionFrames(env(), "https://preview.pages.dev/dashboard", ".x", "hover", { width: 1440, height: 900 });
+    expect(result).toEqual({ frames: [], authWalled: true });
+    expect(mocks.screenshot).not.toHaveBeenCalled();
+  });
+
+  it("degrades to no frames (never throws) when the browser throws mid-capture", async () => {
+    mocks.launch.mockRejectedValue(new Error("binding exhausted"));
+    const result = await captureInteractionFrames(env(), "https://preview.pages.dev/page", ".x", "hover", { width: 1440, height: 900 });
+    expect(result).toEqual({ frames: [], authWalled: false });
+  });
+
+  it("rejects the target up front when isAllowedUrl disallows it, before launching the browser", async () => {
+    const isAllowedUrl = vi.fn(() => false);
+    const result = await captureInteractionFrames(env(), "https://preview.pages.dev/page", ".x", "hover", { width: 1440, height: 900 }, { isAllowedUrl });
+    expect(result).toEqual({ frames: [], authWalled: false });
+    expect(mocks.launch).not.toHaveBeenCalled();
+  });
+
+  it("closes the browser even when waitForSelector throws", async () => {
+    mocks.waitForSelector.mockRejectedValue(new Error("timed out"));
+    const result = await captureInteractionFrames(env(), "https://preview.pages.dev/page", ".x", "hover", { width: 1440, height: 900 });
+    expect(result).toEqual({ frames: [], authWalled: false });
+    expect(mocks.close).toHaveBeenCalled();
   });
 });
 

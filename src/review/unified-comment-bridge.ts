@@ -23,7 +23,7 @@ import type { AdvisoryFinding } from "../types";
 import type { GateCheckConclusion, GateCheckEvaluation } from "../rules/advisory";
 import type { PublicPrPanelSignalRow } from "../signals/engine";
 import { formatManifestValidationNotice } from "../signals/focus-manifest";
-import type { CaptureRoute } from "./visual/capture";
+import type { CaptureInteractionRoute, CaptureRoute } from "./visual/capture";
 import { VISUAL_REGRESSION_FINDING_CODE, VISUAL_UNRELATED_ISSUE_FINDING_CODE } from "./visual/visual-findings";
 // Single-source the panel marker from its canonical home (the upsert reads it there); re-export so existing
 // importers of `PR_PANEL_COMMENT_MARKER` from this module keep working. The unified body MUST prepend this
@@ -356,6 +356,7 @@ export type UnifiedCommentBridgeArgs = {
    *  Public-safe: only URLs + route paths — no private terms. Default OFF (the processor passes this only
    *  when screenshotsAllowed + the PR touches web-visible files). */
   beforeAfter?: CaptureRoute[] | undefined;
+  interactions?: CaptureInteractionRoute[] | undefined;
   /** Changed-file path + additions/deletions, one entry per file (review.changed_files_summary port). When
    *  present + non-empty, a "Changed files" collapsible (one row per source/test/docs/config/generated
    *  category, with file counts and +/- totals) is appended. Deterministic, no AI. Default OFF (the processor
@@ -537,6 +538,41 @@ export function buildScrollPreviewCollapsible(routes: CaptureRoute[]): UnifiedCo
     "_A short scroll-through clip (desktop) — click either thumbnail to open the full animation. Evidence for scroll-linked behavior a single screenshot can't show._",
   ].join("\n");
   return { title: "Scroll preview", body, rawHtml: true };
+}
+
+/**
+ * Build the "Interaction preview" collapsible from captured hover/click interaction GIFs
+ * (`review.visual.interactions`) — rendered ALONGSIDE "Visual preview"/"Scroll preview", never replacing
+ * them, since a hover-triggered popover or click-driven state change isn't visible in a static screenshot
+ * OR a scroll-through clip. One row per configured interaction TARGET (not per viewport/theme — an
+ * interaction is rarely breakpoint- or theme-dependent, mirroring the contributor-facing animated-evidence
+ * contract's own "one row per interaction target" shape), captioned with the interaction's `label` when
+ * configured, falling back to its raw CSS `selector` otherwise. Self-host only (see capture.ts's
+ * `isScrollGifAvailable` gate) — off, byte-identical to today, for every repo that hasn't opted in. Same
+ * clickable-thumbnail markup and public-safety argument as `buildScrollPreviewCollapsible`. Returns null
+ * when no interaction produced a GIF, so the section is omitted entirely.
+ */
+export function buildInteractionPreviewCollapsible(interactions: CaptureInteractionRoute[]): UnifiedCollapsible | null {
+  const attr = (value: string): string =>
+    value.replace(/[&"<>]/g, (char) => ({ "&": "&amp;", '"': "&quot;", "<": "&lt;", ">": "&gt;" })[char] as string);
+  // #6324: same visible one-line caption convention as buildBeforeAfterCollapsible/buildScrollPreviewCollapsible.
+  const cell = (url: string | undefined, label: string): string =>
+    url ? `<a href="${attr(url)}" target="_blank" rel="noopener"><img width="380" alt="${attr(label)}" src="${attr(url)}"></a><br><sub>${attr(label)}</sub>` : "—";
+  const rows: string[] = [];
+  for (const interaction of interactions) {
+    if (!interaction.beforeGifUrl && !interaction.afterGifUrl) continue;
+    const target = interaction.label && interaction.label.trim() ? interaction.label.trim() : interaction.selector;
+    rows.push(`| ${attr(target)} | ${cell(interaction.beforeGifUrl, `before ${target}`)} | ${cell(interaction.afterGifUrl, `after ${target}`)} |`);
+  }
+  if (rows.length === 0) return null;
+  const body = [
+    "| Target | Before | After |",
+    "| --- | --- | --- |",
+    ...rows,
+    "",
+    "_Static screenshots can't show pointer-driven behavior — click either thumbnail to open the full interaction clip._",
+  ].join("\n");
+  return { title: "Interaction preview", body, rawHtml: true };
 }
 
 /** A changed file's path + line deltas — everything `buildChangedFilesSummaryCollapsible` needs to group and
@@ -904,7 +940,12 @@ export function buildUnifiedCommentBody(args: UnifiedCommentBridgeArgs): string 
   // #3612: "Scroll preview" renders ALONGSIDE "Visual preview" (never replacing it) — self-host + gif:true
   // only, so this is null (no section, no behavior change) for every repo that hasn't opted in.
   const scrollCollapsible = args.beforeAfter && args.beforeAfter.length > 0 ? buildScrollPreviewCollapsible(args.beforeAfter) : null;
-  const extraCollapsibles = scrollCollapsible !== null ? [...(withVisual ?? []), scrollCollapsible] : withVisual;
+  const withScroll = scrollCollapsible !== null ? [...(withVisual ?? []), scrollCollapsible] : withVisual;
+  // #interaction-gif-capture: "Interaction preview" renders ALONGSIDE "Visual preview"/"Scroll preview"
+  // (never replacing them) — self-host + review.visual.interactions only, so this is null (no section, no
+  // behavior change) for every repo that hasn't opted in.
+  const interactionCollapsible = args.interactions && args.interactions.length > 0 ? buildInteractionPreviewCollapsible(args.interactions) : null;
+  const extraCollapsibles = interactionCollapsible !== null ? [...(withScroll ?? []), interactionCollapsible] : withScroll;
 
   const body = renderWithinBudget(
     input,

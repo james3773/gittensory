@@ -441,6 +441,117 @@ export async function captureScrollFrames(env: Env, url: string, viewport: Viewp
   }
 }
 
+// Mirrors MAX_SCROLL_STEPS/SCROLL_SETTLE_MS's reasoning above: a fixed, small number of post-interaction
+// frames is enough evidence for a hover/click-triggered CSS transition or state change without turning this
+// into an unbounded "record everything" system. One extra frame at rest (step 0, before the interaction
+// fires) plus 3 post-interaction frames covers "mid-transition" and "settled" without much added cost.
+const MAX_INTERACTION_STEPS = 4;
+const INTERACTION_SETTLE_MS = 350;
+const INTERACTION_ELEMENT_TIMEOUT_MS = 3_000;
+
+export type InteractionAction = "hover" | "click";
+
+async function waitForInteractionSettle(): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, INTERACTION_SETTLE_MS));
+}
+
+/**
+ * Capture a short sequence of frames around a specific interaction: one frame at rest, then trigger `action`
+ * on `selector`, then a few more frames at intervals to catch a CSS transition or JS-driven state change
+ * mid-flight and settled — evidence for a hover-triggered popover, a click-triggered state change, or
+ * similar behavior a single static screenshot can't show. Deliberately narrow, mirroring
+ * `captureScrollFrames`'s own scope note: `hover`/`click` only — a `drag` interaction needs a coordinate-
+ * based mouse-down/move/up sequence with no reliable way to infer a drop target from a CSS selector alone,
+ * so it's out of scope here rather than shipped half-working.
+ *
+ * Mirrors `captureScrollFrames`'s SSRF guard, sub-request interception, and auth-wall detection exactly
+ * (duplicated rather than shared — see that function's own doc comment for why). `selector` matching nothing
+ * on the page is NOT an error — it's a normal "this interaction doesn't apply to this side" outcome (e.g. an
+ * element only present after the PR's change adds it): returns empty frames, the same fail-open contract as
+ * every other capture failure here.
+ */
+export async function captureInteractionFrames(
+  env: Env,
+  url: string,
+  selector: string,
+  action: InteractionAction,
+  viewport: Viewport = VIEWPORT,
+  opts: CaptureShotOptions = {},
+): Promise<{ frames: Uint8Array[]; authWalled: boolean }> {
+  if (!url || !isSafeHttpUrl(url) || (opts.isAllowedUrl && !opts.isAllowedUrl(url))) {
+    console.log(JSON.stringify({ event: "render_interaction_frames_blocked", url: String(url).slice(0, 120) }));
+    return { frames: [], authWalled: false };
+  }
+  if (!env.BROWSER) return { frames: [], authWalled: false };
+  let browser: Awaited<ReturnType<typeof puppeteer.launch>> | null = null;
+  try {
+    browser = await puppeteer.launch(env.BROWSER as unknown as Parameters<typeof puppeteer.launch>[0]);
+    const page = await browser.newPage();
+    await page.setRequestInterception(true);
+    page.on("request", (request: ScreenshotRequest) => {
+      const requestUrl = request.url();
+      let protocol = "";
+      try {
+        protocol = new URL(requestUrl).protocol;
+      } catch {
+        request.abort().catch(() => undefined);
+        return;
+      }
+      if (protocol === "http:" || protocol === "https:") {
+        const isAllowedNavigation = !request.isNavigationRequest() || !opts.isAllowedUrl || opts.isAllowedUrl(requestUrl);
+        if (!isSafeHttpUrl(requestUrl) || !isAllowedNavigation) {
+          console.log(JSON.stringify({ event: "render_interaction_frames_request_blocked", url: requestUrl.slice(0, 120) }));
+          request.abort().catch(() => undefined);
+          return;
+        }
+      }
+      request.continue().catch(() => undefined);
+    });
+    await page.setViewport(viewport);
+    if (opts.theme) await page.emulateMediaFeatures([{ name: "prefers-color-scheme", value: opts.theme }]);
+    await page.goto(url, { waitUntil: "networkidle0", timeout: 20000 });
+    if (!isSafeHttpUrl(page.url()) || (opts.isAllowedUrl && !opts.isAllowedUrl(page.url()))) {
+      console.log(JSON.stringify({ event: "render_interaction_frames_redirect_blocked", url, final: page.url().slice(0, 200) }));
+      return { frames: [], authWalled: false };
+    }
+    if (isAuthWallUrl(page.url()) && !isAuthWallUrl(url)) {
+      console.log(JSON.stringify({ event: "render_interaction_frames_auth_walled", url, final: page.url().slice(0, 200) }));
+      return { frames: [], authWalled: true };
+    }
+    // A configured themeStorageKey (#4109) ALSO forces the theme via localStorage, then reloads -- mirrors
+    // captureShot's own fallback exactly (see CaptureShotOptions.theme's doc for what this fixes and why).
+    if (opts.theme && opts.themeStorageKey) {
+      const storageKey = opts.themeStorageKey;
+      const storageValue = opts.theme;
+      if (!(await forceThemeStorage(page, storageKey, storageValue))) return { frames: [], authWalled: false };
+      await page.reload({ waitUntil: "networkidle0", timeout: THEME_STORAGE_RELOAD_TIMEOUT_MS });
+    }
+    const element = await page.waitForSelector(selector, { timeout: INTERACTION_ELEMENT_TIMEOUT_MS }).catch(() => null);
+    if (!element) {
+      console.log(JSON.stringify({ event: "render_interaction_frames_selector_not_found", url, selector: selector.slice(0, 120) }));
+      return { frames: [], authWalled: false };
+    }
+    const frames: Uint8Array[] = [];
+    // Frame 0: the at-rest state, before the interaction fires — the "before" half of the animated evidence.
+    frames.push((await page.screenshot({ type: "png", fullPage: false })) as Uint8Array);
+    if (action === "hover") {
+      await element.hover();
+    } else {
+      await element.click();
+    }
+    for (let step = 1; step < MAX_INTERACTION_STEPS; step++) {
+      await waitForInteractionSettle();
+      frames.push((await page.screenshot({ type: "png", fullPage: false })) as Uint8Array);
+    }
+    return { frames, authWalled: false };
+  } catch (error) {
+    console.log(JSON.stringify({ event: "render_interaction_frames_error", mode: "binding", url, message: String(error).slice(0, 200) }));
+    return { frames: [], authWalled: false };
+  } finally {
+    if (browser) await browser.close().catch(() => undefined);
+  }
+}
+
 export async function handleShot(request: Request, env: Env, opts: ShotOptions = {}): Promise<Response> {
   const params = new URL(request.url).searchParams;
   const r2Prefix = `${opts.namespace ?? "loopover"}/shots/`;

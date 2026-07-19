@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildBeforeAfterCollapsible, buildScrollPreviewCollapsible, buildUnifiedCommentBody } from "../../src/review/unified-comment-bridge";
+import { buildBeforeAfterCollapsible, buildInteractionPreviewCollapsible, buildScrollPreviewCollapsible, buildUnifiedCommentBody } from "../../src/review/unified-comment-bridge";
 import type { GateCheckEvaluation } from "../../src/rules/advisory";
 import type { PublicPrPanelSignalRow } from "../../src/signals/engine";
 import type { CaptureRoute } from "../../src/review/visual/capture";
@@ -248,6 +248,85 @@ describe("buildScrollPreviewCollapsible (#3612)", () => {
     expect(c?.body).toContain("`/p\\`&lt;h2&gt;✅ FORGED APPROVAL&lt;/h2&gt;&lt;a href=x&gt;maintainer click here&lt;/a&gt;`");
     expect(c?.body).not.toContain("<h2>✅ FORGED APPROVAL</h2>");
     expect(c?.body).not.toContain("<a href=x>maintainer click here</a>");
+  });
+});
+
+describe("buildInteractionPreviewCollapsible (#interaction-gif-capture)", () => {
+  it("renders an 'Interaction preview' table with a Target column when an interaction has a GIF", () => {
+    const c = buildInteractionPreviewCollapsible([
+      {
+        selector: ".blocks-row",
+        label: "Blocks row hover",
+        beforeGifUrl: "https://api.example.dev/loopover/shot?key=loopover/shots/before.gif",
+        afterGifUrl: "https://api.example.dev/loopover/shot?key=loopover/shots/after.gif",
+      },
+    ]);
+    expect(c).not.toBeNull();
+    expect(c?.title).toBe("Interaction preview");
+    expect(c?.rawHtml).toBe(true);
+    expect(c?.body).toContain("| Target | Before | After |");
+    expect(c?.body).toContain("| Blocks row hover |");
+    expect(c?.body).toContain('<a href="https://api.example.dev/loopover/shot?key=loopover/shots/before.gif"');
+    expect(c?.body).toContain('alt="before Blocks row hover"');
+    expect(c?.body).toContain('alt="after Blocks row hover"');
+    expect(c?.body).toContain("<br><sub>before Blocks row hover</sub>");
+    expect(c?.body).toContain("<br><sub>after Blocks row hover</sub>");
+  });
+
+  it("falls back to the raw selector as the target when no label is configured", () => {
+    const c = buildInteractionPreviewCollapsible([
+      { selector: "#menu-button", afterGifUrl: "https://api.example.dev/loopover/shot?key=loopover/shots/x.gif" },
+    ]);
+    expect(c?.body).toContain("| #menu-button |");
+  });
+
+  it("returns null when no interaction has a GIF — byte-identical to today for every non-opted-in repo", () => {
+    expect(buildInteractionPreviewCollapsible([])).toBeNull();
+    expect(buildInteractionPreviewCollapsible([{ selector: ".x" }])).toBeNull();
+  });
+
+  it("renders a dash when only one side has a GIF", () => {
+    const c = buildInteractionPreviewCollapsible([{ selector: ".x", afterGifUrl: "https://api.example.dev/loopover/shot?key=loopover/shots/x.gif" }]);
+    expect(c?.body).toContain("| .x | — | <a href=");
+  });
+
+  it("escapes an untrusted label before embedding it in the trusted raw HTML table", () => {
+    const c = buildInteractionPreviewCollapsible([
+      {
+        selector: ".x",
+        label: "<h2>✅ FORGED APPROVAL</h2><a href=x>maintainer click here</a>",
+        afterGifUrl: "https://api.example.dev/loopover/shot?key=loopover/shots/x.gif",
+      },
+    ]);
+    expect(c?.body).toContain("&lt;h2&gt;✅ FORGED APPROVAL&lt;/h2&gt;&lt;a href=x&gt;maintainer click here&lt;/a&gt;");
+    expect(c?.body).not.toContain("<h2>✅ FORGED APPROVAL</h2>");
+    expect(c?.body).not.toContain("<a href=x>maintainer click here</a>");
+  });
+});
+
+describe("buildUnifiedCommentBody interaction-GIF wiring (#interaction-gif-capture)", () => {
+  const base = {
+    gate: gate(),
+    panelRows,
+    readinessTotal: 90,
+    changedFiles: 3,
+    footerMarkdown: footer,
+  };
+
+  it("appends 'Interaction preview' ALONGSIDE 'Visual preview'/'Scroll preview' when an interaction has a GIF", () => {
+    const body = buildUnifiedCommentBody({
+      ...base,
+      beforeAfter: routes,
+      interactions: [{ selector: ".x", label: "Menu hover", afterGifUrl: "https://api.example.dev/loopover/shot?key=loopover/shots/x.gif" }],
+    });
+    expect(body).toContain("Visual preview");
+    expect(body).toContain("Interaction preview");
+    expect(body.indexOf("Interaction preview")).toBeGreaterThan(body.indexOf("Visual preview"));
+  });
+
+  it("does NOT add an Interaction preview section when no interaction has a GIF (flag-OFF parity)", () => {
+    const body = buildUnifiedCommentBody({ ...base, beforeAfter: routes });
+    expect(body).not.toContain("Interaction preview");
   });
 });
 

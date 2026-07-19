@@ -25,6 +25,7 @@ describe("review.visual wiring (#3609 / #3610)", () => {
       themeStorageKey: null,
       actionsFallback: false,
       bugAnalysis: false,
+      interactions: [],
     });
     expect(loadSpy).toHaveBeenCalledWith(expect.anything(), "acme/widgets");
     loadSpy.mockRestore();
@@ -66,6 +67,44 @@ describe("review.visual wiring (#3609 / #3610)", () => {
   it("bug_analysis defaults to false, byte-identical to today, when unset", async () => {
     const loadSpy = vi.spyOn(focusManifestLoader, "loadRepoFocusManifest").mockResolvedValue(parseFocusManifest({ review: { visual: { gif: true } } }));
     await expect(resolveVisualCaptureConfig({} as Env, "acme/widgets")).resolves.toEqual({ ...EMPTY_VISUAL_CONFIG, gif: true, bugAnalysis: false });
+    loadSpy.mockRestore();
+  });
+
+  it("resolves review.visual.interactions from the repo's focus manifest", async () => {
+    const manifest = parseFocusManifest({
+      review: {
+        visual: {
+          interactions: [
+            { selector: ".hover-target", action: "hover", label: "Blocks row hover" },
+            { selector: "#menu-button", action: "click" },
+          ],
+        },
+      },
+    });
+    const loadSpy = vi.spyOn(focusManifestLoader, "loadRepoFocusManifest").mockResolvedValue(manifest);
+    await expect(resolveVisualCaptureConfig({} as Env, "acme/widgets")).resolves.toEqual({
+      ...EMPTY_VISUAL_CONFIG,
+      interactions: [
+        { selector: ".hover-target", action: "hover", path: null, label: "Blocks row hover" },
+        { selector: "#menu-button", action: "click", path: null, label: null },
+      ],
+    });
+    loadSpy.mockRestore();
+  });
+
+  it("drops an interactions entry with a missing selector or an invalid action", async () => {
+    const manifest = parseFocusManifest({
+      review: {
+        visual: {
+          interactions: [{ action: "hover" }, { selector: ".ok", action: "drag" }, { selector: ".also-ok", action: "click" }],
+        },
+      },
+    });
+    const loadSpy = vi.spyOn(focusManifestLoader, "loadRepoFocusManifest").mockResolvedValue(manifest);
+    await expect(resolveVisualCaptureConfig({} as Env, "acme/widgets")).resolves.toEqual({
+      ...EMPTY_VISUAL_CONFIG,
+      interactions: [{ selector: ".also-ok", action: "click", path: null, label: null }],
+    });
     loadSpy.mockRestore();
   });
 });

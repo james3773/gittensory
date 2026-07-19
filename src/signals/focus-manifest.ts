@@ -88,6 +88,8 @@ export {
   type ReviewProfile,
   type SelfHostAiModelConfig,
   type VisualConfig,
+  type VisualInteraction,
+  type VisualInteractionAction,
   type VisualPreviewConfig,
   type VisualRoutesConfig,
   type VisualTheme,

@@ -28,7 +28,7 @@ import {
   getPreviewBuildState,
   parseRepo,
 } from "./preview-url";
-import { captureScrollFrames, captureShot, DESKTOP_VIEWPORT, MOBILE_VIEWPORT, type ShotTheme, type Viewport } from "./shot";
+import { captureInteractionFrames, captureScrollFrames, captureShot, DESKTOP_VIEWPORT, MOBILE_VIEWPORT, type InteractionAction, type ShotTheme, type Viewport } from "./shot";
 import { compareCapturedScreenshots, isVisualDiffAvailable, type VisualDiffOutcome } from "./pixel-diff";
 import { encodeScrollGif, isScrollGifAvailable } from "./scroll-gif";
 
@@ -75,9 +75,12 @@ export interface CaptureRoute {
   afterGifUrl?: string | undefined;
 }
 
-/** The capture pipeline's result: the rendered routes, plus whether a preview build is still pending. */
+/** The capture pipeline's result: the rendered routes, any captured interaction GIFs, plus whether a
+ *  preview build is still pending. `interactions` is always `[]` when `review.visual.interactions` is
+ *  unconfigured — byte-identical to today for every repo that hasn't opted in. */
 export interface CaptureResult {
   routes: CaptureRoute[];
+  interactions: CaptureInteractionRoute[];
   previewPending: boolean;
 }
 
@@ -493,6 +496,74 @@ async function captureScrollGif(
   return url;
 }
 
+/** One `review.visual.interactions[]` entry, as resolved by the caller from the manifest. */
+export type VisualInteractionInput = {
+  selector: string;
+  action: InteractionAction;
+  path?: string | null | undefined;
+  label?: string | null | undefined;
+};
+
+/** Capture `interaction` for `page` and assemble it into a GIF, or undefined when there's no page, the
+ *  selector never matches / the render fails/auth-walls, storage is unavailable, or this build can't
+ *  assemble GIFs at all (isScrollGifAvailable — reused here; the encode step is frame-source-agnostic, see
+ *  scroll-gif.ts). Same fingerprint-cache scheme as `captureScrollGif`, with the selector+action folded into
+ *  the key so two different interactions on the same page never collide.
+ */
+async function captureInteractionGif(
+  env: Env,
+  target: CaptureTarget,
+  page: string,
+  slot: "before" | "after",
+  interaction: VisualInteractionInput,
+  theme?: ShotTheme | undefined,
+  themeStorageKey?: string | undefined,
+): Promise<string | undefined> {
+  if (!page) return undefined;
+  if (!env.REVIEW_AUDIT || (!env.PUBLIC_API_ORIGIN && !env.REVIEW_AUDIT_S3_PUBLIC_URL)) return undefined;
+  const fingerprint = await sha256Hex(
+    `${target.headSha ?? target.prNumber}:interactiongif:${slot}:${interaction.selector}:${interaction.action}:${page}${theme ? `:${theme}` : ""}${theme && themeStorageKey ? `:${themeStorageKey}` : ""}`,
+  );
+  const key = `${NAMESPACE}/shots/${fingerprint.slice(0, 40)}.gif`;
+  const url = resolveShotUrl(env, key);
+  const cached = await env.REVIEW_AUDIT.get(key).catch(() => null);
+  if (cached) return url;
+  const { frames, authWalled } = await captureInteractionFrames(
+    env,
+    page,
+    interaction.selector,
+    interaction.action,
+    DESKTOP_VIEWPORT,
+    theme ? { theme, ...(themeStorageKey ? { themeStorageKey } : {}) } : {},
+  ).catch(() => ({ frames: [] as Uint8Array[], authWalled: false }));
+  if (authWalled || frames.length === 0) return undefined;
+  const gifBytes = await encodeScrollGif(
+    frames.map((png) => ({ png })),
+    GIF_FRAME_DELAY_MS,
+  );
+  if (!gifBytes) return undefined;
+  await env.REVIEW_AUDIT.put(key, gifBytes, { httpMetadata: { contentType: "image/gif" } }).catch(() => undefined);
+  return url;
+}
+
+/** One `review.visual.interactions[]` entry's captured result (#interaction-gif-capture) — before/after GIF
+ *  URLs for a specific hover/click interaction. Rendered as its own "Interaction preview" row, one per
+ *  configured interaction (never multiplied by viewport/theme, unlike `CaptureRoute`). `selector`/`label`
+ *  round-trip the input config so the comment can show a human-readable target without re-reading config. */
+export interface CaptureInteractionRoute {
+  selector: string;
+  label?: string | undefined;
+  beforeGifUrl?: string | undefined;
+  afterGifUrl?: string | undefined;
+}
+
+// Bounds how many configured interactions actually get captured per PR — mirrors MAX_ROUTES's wall-clock
+// reasoning (each interaction is at least as expensive as a scroll-GIF capture: a full render plus 3+ extra
+// frames per side). parseVisualInteractions (packages/loopover-engine) already caps the CONFIG list itself
+// at 5; this is a second, independent bound on what actually executes, so a future config-cap change can't
+// silently blow the capture budget without a matching review here.
+const MAX_INTERACTIONS = 3;
+
 /** Per-repo `review.visual` config, as resolved by the caller from the manifest (#3609 / #3610 / #3678 /
  *  #3612 / #4109). Absent ⇒ byte-identical to today (GitHub-native discovery, automatic route inference,
  *  single default-theme capture, built-in route cap, no scroll-GIF, no localStorage theme forcing). */
@@ -514,6 +585,11 @@ export type VisualCaptureConfig = {
   /** `review.visual.actions_fallback` (#4112): dispatch the GitHub-Actions build-and-serve fallback when NO
    *  preview at all was found for this PR. false/absent (default) ⇒ byte-identical to today. */
   actionsFallback?: boolean | null | undefined;
+  /** `review.visual.interactions`: specific elements to interact with (hover/click) and capture as animated
+   *  evidence, for behavior a static screenshot can't show that isn't scroll-linked. Empty/absent (default)
+   *  ⇒ byte-identical to today, no interaction capture. Capped at MAX_INTERACTIONS regardless of how many
+   *  are configured. */
+  interactions?: readonly VisualInteractionInput[] | null | undefined;
 };
 
 /**
@@ -690,5 +766,34 @@ export async function buildCapture(env: Env, token: string, target: CaptureTarge
       });
     }
   }
-  return { routes: captureRoutes, previewPending };
+
+  // Interaction capture (#interaction-gif-capture): NOT multiplied by theme/route the way captureRoutes is
+  // above -- a hover/click interaction is captured once per configured entry, against its OWN `path` (not
+  // every route this PR touches), mirroring the contributor-facing animated-evidence contract's "one row per
+  // interaction target" shape. Gated on isScrollGifAvailable() (reused: the encode step is frame-source-
+  // agnostic, see scroll-gif.ts) since there is no point capturing frames this build can never assemble into
+  // a GIF -- self-host only, same as the scroll-GIF path above.
+  const interactionsConfigured = (visualConfig?.interactions ?? []).slice(0, MAX_INTERACTIONS);
+  const interactionRoutes: CaptureInteractionRoute[] = [];
+  if (interactionsConfigured.length > 0 && isScrollGifAvailable()) {
+    for (const interaction of interactionsConfigured) {
+      const interactionPath = interaction.path ?? "/";
+      const beforePage = prodBase ? joinUrl(prodBase, interactionPath) : "";
+      const afterPage = previewBase ? joinUrl(previewBase, interactionPath) : "";
+      const [beforeGifUrl, afterGifUrl] = await Promise.all([
+        captureInteractionGif(env, target, beforePage, "before", interaction),
+        afterPage ? captureInteractionGif(env, target, afterPage, "after", interaction) : Promise.resolve<string | undefined>(undefined),
+      ]);
+      if (beforeGifUrl || afterGifUrl) {
+        interactionRoutes.push({
+          selector: interaction.selector,
+          ...(interaction.label ? { label: interaction.label } : {}),
+          ...(beforeGifUrl ? { beforeGifUrl } : {}),
+          ...(afterGifUrl ? { afterGifUrl } : {}),
+        });
+      }
+    }
+  }
+
+  return { routes: captureRoutes, interactions: interactionRoutes, previewPending };
 }
