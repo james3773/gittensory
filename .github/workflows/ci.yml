@@ -410,6 +410,15 @@ jobs:
           key: tsbuildinfo-${{ hashFiles('tsconfig.json', 'package-lock.json') }}-${{ github.run_id }}
           restore-keys: |
             tsbuildinfo-${{ hashFiles('tsconfig.json', 'package-lock.json') }}-
+      # Deliberately NOT routed through Turborepo's //#typecheck task, unlike every other build/lint/
+      # typecheck step in this job -- investigated and rejected, not just skipped. test/** (tsconfig.json's
+      # own "include") reaches via relative imports into six other workspace packages/apps (see turbo.json's
+      # //#typecheck comment for the full audit), so a turbo.json inputs list correct enough to avoid a
+      # stale-cache-masks-a-real-error bug here would need to track that sprawling, growing cross-package
+      # surface by hand. tsc's own --incremental engine (below) already tracks the exact real dependency
+      # graph natively and precisely, with zero drift risk, and already delivers the actual measured
+      # speedup (~13.5s cold vs ~3.6s warm) -- wrapping it in turbo would layer a cruder, hand-maintained
+      # approximation on top of a mechanism that's already strictly more correct for this specific task.
       - name: Typecheck
         if: ${{ github.event_name == 'push' || needs.changes.outputs.backend == 'true' }}
         run: npm run typecheck

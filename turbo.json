@@ -3,10 +3,30 @@
   "tasks": {
     "//#typecheck": {
       "dependsOn": ["@loopover/engine#build"],
-      // Root tsconfig.json's own "include" list, plus the config files that change what it does.
-      // Without this, an unscoped root task defaults to hashing the ENTIRE repository (every doc,
-      // workflow file, README, etc.) as its input set -- confirmed via `turbo run typecheck --dry=json`
-      // during development, which is effectively "never cache-hits in practice" while looking configured.
+      // Root tsconfig.json's own "include" list ("src", "test", plus a handful of named config files) is
+      // NOT a complete accounting of what tsc actually type-checks: "include" only seeds the starting file
+      // set, and tsc's real surface expands to everything transitively imported from there, regardless of
+      // whether the imported file physically lives inside src/ or test/. test/** (deliberately included so
+      // Codecov's codecov/patch has one source of truth, see the plan doc referenced in ci.yml) turned out
+      // to reach via relative-path imports into six other workspace packages/apps -- confirmed by grepping
+      // every import in src/+test/ that crosses a packages/**or apps/** boundary, not just spot-checked:
+      // packages/loopover-miner/{lib,bin}/**, packages/loopover-mcp/package.json (JSON import), packages/
+      // discovery-index/src/**, apps/loopover-ui/src/lib/**, apps/loopover-extension/**, and apps/loopover-
+      // miner-extension/**. Before this was added, none of those six were hashed, so an edit to (say)
+      // packages/loopover-miner/lib/opportunity-fanout.js could silently leave a stale cache HIT here even
+      // though a real `tsc --noEmit` would fail -- exactly the class of bug PR #5082 (see ci.yml's "Build
+      // engine package" comment) already burned this repo on once. packages/loopover-mcp/bin/** is
+      // deliberately NOT listed: every test reference to it is a runtime path string
+      // (`join(process.cwd(), "packages/loopover-mcp/bin/loopover-mcp.js")`, spawned as a subprocess or
+      // read as raw text), never a static import, so its contents don't affect tsc's type-checked surface.
+      // This list is a snapshot of test/'s real cross-package reach as of the audit that added it, not a
+      // structural guarantee -- a future test file importing from a NOT-yet-listed package/app would
+      // reopen the same silent-stale-cache gap. Re-run the same grep (every src/+test/ import crossing a
+      // packages/**or apps/** boundary) before trusting this list again, especially before ever wiring the
+      // "Typecheck" ci.yml step through this task (it still calls plain `npm run typecheck` today,
+      // specifically because tsc's own --incremental engine already tracks this exact transitive graph
+      // precisely and correctly, without needing a hand-maintained approximation of it here at all -- see
+      // that step's own comment in ci.yml).
       "inputs": [
         "src/**",
         "test/**",
@@ -17,7 +37,14 @@
         "drizzle.config.ts",
         "tsconfig.json",
         "package.json",
-        "package-lock.json"
+        "package-lock.json",
+        "packages/loopover-miner/lib/**",
+        "packages/loopover-miner/bin/**",
+        "packages/loopover-mcp/package.json",
+        "packages/discovery-index/src/**",
+        "apps/loopover-ui/src/lib/**",
+        "apps/loopover-extension/**",
+        "apps/loopover-miner-extension/**"
       ],
       "outputs": []
     },
