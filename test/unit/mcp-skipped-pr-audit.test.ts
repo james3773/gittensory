@@ -31,6 +31,7 @@ async function seedOwnedRepo(env: Env, installationId: number, owner: string, na
 type SkippedPrAuditData = {
   generatedAt: string;
   limit: number;
+  offset: number;
   hasMore: boolean;
   filters: { repoFullName: string | null; reason: string | null; since: string | null };
   items: Array<{ repoFullName: string; pullNumber: number; reason: string; timestamp: string; remediation: string }>;
@@ -68,6 +69,7 @@ describe("MCP loopover_get_skipped_pr_audit (#5825)", () => {
     expect(data.items).toEqual([expect.objectContaining({ repoFullName: "repo-owner/owned-repo", pullNumber: 4, reason: "bot_author" })]);
     expect(data.items[0]?.remediation).toContain("intentionally kept quiet");
     expect(data.limit).toBe(50);
+    expect(data.offset).toBe(0);
     expect(data.hasMore).toBe(false);
     expect(data.filters).toEqual({ repoFullName: null, reason: null, since: null });
     expect(JSON.stringify(result.content)).not.toContain("github_pat_should_not_export");

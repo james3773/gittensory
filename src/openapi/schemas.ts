@@ -1132,6 +1132,7 @@ export const SkippedPrAuditExportSchema = z
   .object({
     generatedAt: z.string(),
     limit: z.number().int().min(1).max(100),
+    offset: z.number().int().min(0),
     hasMore: z.boolean(),
     filters: z.object({
       repoFullName: z.string().nullable(),

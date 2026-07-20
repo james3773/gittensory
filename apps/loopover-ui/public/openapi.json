@@ -11061,11 +11061,16 @@
                 "remediation"
               ]
             }
+          },
+          "offset": {
+            "type": "integer",
+            "minimum": 0
           }
         },
         "required": [
           "generatedAt",
           "limit",
+          "offset",
           "hasMore",
           "filters",
           "items"
@@ -17899,6 +17904,16 @@
           {
             "schema": {
               "type": "string",
+              "example": "0"
+            },
+            "required": false,
+            "description": "Number of parsed skip events to skip before returning rows (non-negative).",
+            "name": "offset",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
               "example": "JSONbored/loopover"
             },
             "required": false,
@@ -17909,6 +17924,7 @@
           {
             "schema": {
               "type": "string",
+              "example": "not_official_gittensor_miner",
               "enum": [
                 "surface_off",
                 "missing_author",
@@ -17917,8 +17933,7 @@
                 "maintainer_author",
                 "miner_detection_unavailable",
                 "not_official_gittensor_miner"
-              ],
-              "example": "not_official_gittensor_miner"
+              ]
             },
             "required": false,
             "description": "Optional PR skip reason filter.",

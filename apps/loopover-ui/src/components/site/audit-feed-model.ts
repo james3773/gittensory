@@ -17,6 +17,7 @@ export type SkippedPrAuditItem = {
 export type SkippedPrAuditExport = {
   generatedAt: string;
   limit: number;
+  offset: number;
   hasMore: boolean;
   filters: {
     repoFullName: string | null;
@@ -38,12 +39,14 @@ export const SKIP_REASON_OPTIONS: Array<{ value: "" | SkippedPrAuditReason; labe
 
 export function buildSkippedPrAuditPath(options: {
   limit: number;
+  offset?: number;
   repoFullName?: string;
   reason?: SkippedPrAuditReason;
   since?: string;
 }): string {
   const params = new URLSearchParams();
   params.set("limit", String(options.limit));
+  params.set("offset", String(Math.max(0, options.offset ?? 0)));
   if (options.repoFullName?.trim()) params.set("repoFullName", options.repoFullName.trim());
   if (options.reason) params.set("reason", options.reason);
   if (options.since?.trim()) params.set("since", options.since.trim());
@@ -83,6 +86,8 @@ export function normalizeSkippedPrAuditExport(data: unknown): SkippedPrAuditExpo
   return {
     generatedAt: raw.generatedAt,
     limit: typeof raw.limit === "number" ? raw.limit : items.length,
+    offset:
+      typeof raw.offset === "number" && Number.isFinite(raw.offset) ? Math.max(0, raw.offset) : 0,
     hasMore: Boolean(raw.hasMore),
     filters: {
       repoFullName:

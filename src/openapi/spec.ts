@@ -1202,6 +1202,10 @@ export function buildOpenApiSpec() {
           param: { description: "Maximum rows to return, clamped from 1 to 100." },
           example: "50",
         }),
+        offset: z.string().optional().openapi({
+          param: { description: "Number of parsed skip events to skip before returning rows (non-negative)." },
+          example: "0",
+        }),
         repoFullName: z.string().optional().openapi({
           param: { description: "Optional repository filter. Browser sessions must have control-panel access to this repo." },
           example: "JSONbored/loopover",

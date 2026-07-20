@@ -4476,10 +4476,12 @@ describe("api routes", () => {
     expect(bounded.status).toBe(200);
     const boundedBody = (await bounded.json()) as {
       limit: number;
+      offset: number;
       hasMore: boolean;
       items: Array<{ repoFullName: string; pullNumber: number; reason: string; timestamp: string; remediation: string }>;
     };
     expect(boundedBody.limit).toBe(3);
+    expect(boundedBody.offset).toBe(0);
     expect(boundedBody.hasMore).toBe(true);
     expect(boundedBody.items).toEqual([
       expect.objectContaining({ repoFullName: "victim-org/secret-repo", pullNumber: 7, reason: "maintainer_author" }),
@@ -4488,6 +4490,25 @@ describe("api routes", () => {
     ]);
     expect(boundedBody.items[1]?.remediation).toContain("repository settings");
     expect(JSON.stringify(boundedBody)).not.toMatch(/private-author|bot-secret|detector-secret|surface-secret|victim-secret|delivery-secret|github_pat|wallet|hotkey|raw trust/i);
+
+    const paged = await app.request("/v1/app/skipped-pr-audit?limit=2&offset=3", { headers: apiHeaders(env) }, env);
+    expect(paged.status).toBe(200);
+    const pagedBody = (await paged.json()) as {
+      limit: number;
+      offset: number;
+      hasMore: boolean;
+      items: Array<{ pullNumber: number }>;
+    };
+    expect(pagedBody).toMatchObject({ limit: 2, offset: 3, hasMore: true });
+    expect(pagedBody.items.map((item) => item.pullNumber)).toEqual([8, 4]);
+    const lastPage = await app.request("/v1/app/skipped-pr-audit?limit=2&offset=6", { headers: apiHeaders(env) }, env);
+    expect(lastPage.status).toBe(200);
+    await expect(lastPage.json()).resolves.toMatchObject({
+      limit: 2,
+      offset: 6,
+      hasMore: false,
+      items: [expect.objectContaining({ pullNumber: 2 }), expect.objectContaining({ pullNumber: 1 })],
+    });
 
     const reasonFiltered = await app.request("/v1/app/skipped-pr-audit?reason=bot_author&limit=500", { headers: apiHeaders(env) }, env);
     expect(reasonFiltered.status).toBe(200);

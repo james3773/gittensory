@@ -17,6 +17,7 @@ import { AuditFeed } from "@/components/site/audit-feed";
 const SAMPLE: {
   generatedAt: string;
   limit: number;
+  offset: number;
   hasMore: boolean;
   filters: { repoFullName: null; reason: null; since: null };
   items: Array<{
@@ -29,6 +30,7 @@ const SAMPLE: {
 } = {
   generatedAt: "2026-05-28T00:00:05.000Z",
   limit: 50,
+  offset: 0,
   hasMore: false,
   filters: { repoFullName: null, reason: null, since: null },
   items: [
@@ -44,16 +46,19 @@ const SAMPLE: {
 
 describe("audit feed helpers", () => {
   it("builds query paths for skipped PR audit filters", () => {
-    expect(buildSkippedPrAuditPath({ limit: 25 })).toBe("/v1/app/skipped-pr-audit?limit=25");
+    expect(buildSkippedPrAuditPath({ limit: 25 })).toBe(
+      "/v1/app/skipped-pr-audit?limit=25&offset=0",
+    );
     expect(
       buildSkippedPrAuditPath({
         limit: 50,
+        offset: 50,
         repoFullName: "repo-owner/owned-repo",
         reason: "bot_author",
         since: "2026-05-28T00:00:00.000Z",
       }),
     ).toBe(
-      "/v1/app/skipped-pr-audit?limit=50&repoFullName=repo-owner%2Fowned-repo&reason=bot_author&since=2026-05-28T00%3A00%3A00.000Z",
+      "/v1/app/skipped-pr-audit?limit=50&offset=50&repoFullName=repo-owner%2Fowned-repo&reason=bot_author&since=2026-05-28T00%3A00%3A00.000Z",
     );
   });
 
@@ -111,7 +116,7 @@ describe("AuditFeed", () => {
       "https://github.com/repo-owner/owned-repo/pull/6",
     );
     expect(apiFetch).toHaveBeenCalledWith(
-      "https://api.test/v1/app/skipped-pr-audit?limit=50",
+      "https://api.test/v1/app/skipped-pr-audit?limit=50&offset=0",
       expect.objectContaining({ credentials: "include" }),
     );
   });
@@ -194,24 +199,189 @@ describe("AuditFeed", () => {
     expect(apiFetch).not.toHaveBeenCalled();
   });
 
-  it("loads more rows until the maximum page size", async () => {
-    apiFetch.mockResolvedValue({ ok: true, data: { ...SAMPLE, hasMore: true } });
+  it("appends the next offset page without replacing already-visible rows (#7438)", async () => {
+    const firstPage = {
+      ...SAMPLE,
+      hasMore: true,
+      offset: 0,
+      items: [
+        {
+          repoFullName: "repo-owner/owned-repo",
+          pullNumber: 6,
+          reason: "surface_off",
+          timestamp: "2026-05-28T00:00:04.000Z",
+          remediation: "Enable a PR public surface in repository settings.",
+        },
+      ],
+    };
+    const secondPage = {
+      ...SAMPLE,
+      hasMore: false,
+      offset: 1,
+      items: [
+        {
+          repoFullName: "repo-owner/owned-repo",
+          pullNumber: 5,
+          reason: "bot_author",
+          timestamp: "2026-05-28T00:00:03.000Z",
+          remediation: "Bot authors are excluded from public PR surfaces.",
+        },
+      ],
+    };
+    apiFetch.mockResolvedValue({ ok: true, data: firstPage });
     render(<AuditFeed />);
-    await screen.findByText("repo-owner/owned-repo");
+    expect(await screen.findByText("#6")).toBeTruthy();
     apiFetch.mockClear();
-    apiFetch.mockResolvedValue({ ok: true, data: { ...SAMPLE, hasMore: true, limit: 100 } });
+    apiFetch.mockResolvedValue({ ok: true, data: secondPage });
 
     fireEvent.click(screen.getByRole("button", { name: /load more/i }));
 
     await waitFor(() =>
       expect(apiFetch).toHaveBeenCalledWith(
-        "https://api.test/v1/app/skipped-pr-audit?limit=100",
+        "https://api.test/v1/app/skipped-pr-audit?limit=50&offset=1",
         expect.any(Object),
       ),
     );
 
-    expect(screen.getByText(/maximum page size \(100\)/i)).toBeTruthy();
+    expect(screen.getByText("#6")).toBeTruthy();
+    expect(await screen.findByText("#5")).toBeTruthy();
+    expect(screen.getByText("2 event(s)")).toBeTruthy();
     expect(screen.queryByRole("button", { name: /load more/i })).toBeNull();
+    expect(screen.queryByText(/maximum page size/i)).toBeNull();
+  });
+
+  it("resets to offset 0 when filters are applied after load-more (#7438)", async () => {
+    apiFetch.mockResolvedValue({
+      ok: true,
+      data: {
+        ...SAMPLE,
+        hasMore: true,
+        items: [
+          {
+            repoFullName: "repo-owner/owned-repo",
+            pullNumber: 6,
+            reason: "surface_off",
+            timestamp: "2026-05-28T00:00:04.000Z",
+            remediation: "Enable a PR public surface in repository settings.",
+          },
+        ],
+      },
+    });
+    render(<AuditFeed />);
+    await screen.findByText("#6");
+    apiFetch.mockClear();
+    apiFetch.mockResolvedValue({
+      ok: true,
+      data: {
+        ...SAMPLE,
+        hasMore: false,
+        offset: 1,
+        items: [
+          {
+            repoFullName: "repo-owner/owned-repo",
+            pullNumber: 5,
+            reason: "bot_author",
+            timestamp: "2026-05-28T00:00:03.000Z",
+            remediation: "Bot authors are excluded from public PR surfaces.",
+          },
+        ],
+      },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /load more/i }));
+    await screen.findByText("#5");
+
+    apiFetch.mockClear();
+    apiFetch.mockResolvedValue({ ok: true, data: SAMPLE });
+    fireEvent.change(screen.getByPlaceholderText("owner/repo"), {
+      target: { value: "repo-owner/owned-repo" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /apply filters/i }));
+
+    await waitFor(() =>
+      expect(apiFetch).toHaveBeenCalledWith(
+        "https://api.test/v1/app/skipped-pr-audit?limit=50&offset=0&repoFullName=repo-owner%2Fowned-repo",
+        expect.any(Object),
+      ),
+    );
+  });
+
+  it("ignores a loadMore response after filters change mid-flight (#7506)", async () => {
+    const firstPage = {
+      ...SAMPLE,
+      hasMore: true,
+      offset: 0,
+      items: [
+        {
+          repoFullName: "repo-owner/owned-repo",
+          pullNumber: 6,
+          reason: "surface_off",
+          timestamp: "2026-05-28T00:00:04.000Z",
+          remediation: "Enable a PR public surface in repository settings.",
+        },
+      ],
+    };
+    const filteredPage = {
+      ...SAMPLE,
+      hasMore: false,
+      offset: 0,
+      items: [
+        {
+          repoFullName: "repo-owner/other-repo",
+          pullNumber: 9,
+          reason: "bot_author",
+          timestamp: "2026-05-28T00:00:06.000Z",
+          remediation: "Bot authors are excluded from public PR surfaces.",
+        },
+      ],
+    };
+    const staleMorePage = {
+      ...SAMPLE,
+      hasMore: false,
+      offset: 1,
+      items: [
+        {
+          repoFullName: "repo-owner/owned-repo",
+          pullNumber: 5,
+          reason: "bot_author",
+          timestamp: "2026-05-28T00:00:03.000Z",
+          remediation: "Bot authors are excluded from public PR surfaces.",
+        },
+      ],
+    };
+
+    let resolveMore!: (value: { ok: true; data: typeof staleMorePage }) => void;
+    const morePromise = new Promise<{ ok: true; data: typeof staleMorePage }>((resolve) => {
+      resolveMore = resolve;
+    });
+
+    apiFetch.mockImplementation((url: string) => {
+      if (String(url).includes("offset=1")) return morePromise;
+      if (String(url).includes("repoFullName=")) {
+        return Promise.resolve({ ok: true, data: filteredPage });
+      }
+      return Promise.resolve({ ok: true, data: firstPage });
+    });
+
+    render(<AuditFeed />);
+    expect(await screen.findByText("#6")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: /load more/i }));
+    await waitFor(() =>
+      expect(apiFetch.mock.calls.some(([url]) => String(url).includes("offset=1"))).toBe(true),
+    );
+
+    fireEvent.change(screen.getByPlaceholderText("owner/repo"), {
+      target: { value: "repo-owner/other-repo" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /apply filters/i }));
+    expect(await screen.findByText("#9")).toBeTruthy();
+    expect(screen.queryByText("#6")).toBeNull();
+
+    resolveMore({ ok: true, data: staleMorePage });
+    await waitFor(() => expect(screen.getByText("#9")).toBeTruthy());
+    expect(screen.queryByText("#6")).toBeNull();
+    expect(screen.queryByText("#5")).toBeNull();
+    expect(screen.getByText("1 event(s)")).toBeTruthy();
   });
 
   it("shows an error state when the audit response is malformed", async () => {

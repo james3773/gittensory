@@ -3191,6 +3191,7 @@ export type PrVisibilitySkipAuditEvent = {
 
 export type PrVisibilitySkipAuditPage = {
   limit: number;
+  offset: number;
   hasMore: boolean;
   items: PrVisibilitySkipAuditEvent[];
 };
@@ -3199,14 +3200,17 @@ export async function listPrVisibilitySkipAuditEvents(
   env: Env,
   options: {
     limit?: number | undefined;
+    offset?: number | undefined;
     repoFullNames?: string[] | undefined;
     reason?: string | undefined;
     sinceIso?: string | undefined;
   } = {},
 ): Promise<PrVisibilitySkipAuditPage> {
   const limit = clampInteger(options.limit ?? 50, 1, 100);
+  // Offset is non-negative; unbounded above so callers can page past the first window (#7438).
+  const offset = Number.isFinite(options.offset) ? Math.max(0, Math.trunc(options.offset as number)) : 0;
   const scopedRepoNames = options.repoFullNames === undefined ? undefined : uniqueRepoNames(options.repoFullNames.map((name) => name.trim()).filter(Boolean));
-  if (scopedRepoNames !== undefined && scopedRepoNames.length === 0) return { limit, hasMore: false, items: [] };
+  if (scopedRepoNames !== undefined && scopedRepoNames.length === 0) return { limit, offset, hasMore: false, items: [] };
 
   const conditions: SQL[] = [eq(auditEvents.eventType, "github_app.pr_visibility_skipped")];
   if (options.reason) conditions.push(eq(auditEvents.detail, options.reason));
@@ -3221,7 +3225,10 @@ export async function listPrVisibilitySkipAuditEvents(
     if (repoFilter) conditions.push(repoFilter);
   }
 
-  const rowLimit = Math.min(500, limit * 5 + 20);
+  // Over-fetch SQL rows (some targetKeys fail to parse) far enough to cover offset + limit + a
+  // one-item peek for hasMore. Cap keeps a single page request bounded.
+  const neededParsed = offset + limit + 1;
+  const rowLimit = Math.min(2500, neededParsed * 5 + 20);
   const rows = await getDb(env.DB)
     .select({
       targetKey: auditEvents.targetKey,
@@ -3246,7 +3253,12 @@ export async function listPrVisibilitySkipAuditEvents(
       },
     ];
   });
-  return { limit, hasMore: items.length > limit, items: items.slice(0, limit) };
+  return {
+    limit,
+    offset,
+    hasMore: items.length > offset + limit,
+    items: items.slice(offset, offset + limit),
+  };
 }
 
 /** Repo-scoped rollups of gate-outcome audit rows for the maintainer dashboard (#2203). Counts only

@@ -989,11 +989,13 @@ const skippedPrAuditShape = {
   reason: z.enum(PUBLIC_SURFACE_SKIP_REASONS).optional(),
   since: z.string().trim().min(1).max(64).optional(),
   limit: z.number().int().positive().optional(),
+  offset: z.number().int().nonnegative().optional(),
 };
 
 const skippedPrAuditOutputSchema = {
   generatedAt: z.string().optional(),
   limit: z.number().optional(),
+  offset: z.number().optional(),
   hasMore: z.boolean().optional(),
   filters: z.unknown().optional(),
   items: z.array(z.unknown()).optional(),
@@ -3504,6 +3506,7 @@ export class LoopoverMcp {
     reason?: PublicSurfaceSkipReason | undefined;
     since?: string | undefined;
     limit?: number | undefined;
+    offset?: number | undefined;
   }): Promise<ToolPayload> {
     const repoFullNames = await this.requireSkippedPrAuditAccess(input.repoFullName);
     let sinceIso: string | undefined;
@@ -3512,12 +3515,19 @@ export class LoopoverMcp {
       if (!Number.isFinite(timestamp)) throw new Error(`Invalid since: "${input.since}" is not a parseable date.`);
       sinceIso = new Date(timestamp).toISOString();
     }
-    const page = await listPrVisibilitySkipAuditEvents(this.env, { limit: input.limit, repoFullNames, reason: input.reason, sinceIso });
+    const page = await listPrVisibilitySkipAuditEvents(this.env, {
+      limit: input.limit,
+      offset: input.offset,
+      repoFullNames,
+      reason: input.reason,
+      sinceIso,
+    });
     return {
-      summary: `LoopOver skipped-PR audit: ${page.items.length} event(s) (limit ${page.limit}${page.hasMore ? ", more available" : ""}).`,
+      summary: `LoopOver skipped-PR audit: ${page.items.length} event(s) (limit ${page.limit}, offset ${page.offset}${page.hasMore ? ", more available" : ""}).`,
       data: {
         generatedAt: nowIso(),
         limit: page.limit,
+        offset: page.offset,
         hasMore: page.hasMore,
         filters: {
           repoFullName: input.repoFullName ?? null,
