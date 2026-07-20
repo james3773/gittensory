@@ -251,6 +251,16 @@ describe("governor-state reputation history (#5134)", () => {
     expect(() => state.saveReputationHistory("not-a-repo", { decided: 1, unfavorable: 0 })).toThrow(/invalid_repo_full_name/);
   });
 
+  // #7525: extend #5831's repo-clone segment path-safety to governor-state — reject traversal /
+  // control-character segments instead of persisting them as reputation keys.
+  it("rejects a repoFullName with a path-traversal or invalid-character segment (#7525)", () => {
+    const state = tempState();
+    expect(() => state.loadReputationHistory("../etc")).toThrow(/invalid_repo_full_name/);
+    expect(() => state.saveReputationHistory("o/..", { decided: 1, unfavorable: 0 })).toThrow(/invalid_repo_full_name/);
+    expect(() => state.loadReputationHistory("o\tbaz/a")).toThrow(/invalid_repo_full_name/);
+    expect(() => state.saveReputationHistory("acme/widgets", { decided: 1, unfavorable: 0 })).not.toThrow();
+  });
+
   describe("forge-scoping (#5563)", () => {
     it("two forge hosts can each hold their own reputation history for the same owner/repo without colliding", () => {
       const state = tempState();

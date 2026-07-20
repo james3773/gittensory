@@ -36,7 +36,7 @@ afterEach(() => {
 });
 
 describe("loopover-miner governor ledger CLI (#2328)", () => {
-  it("parseGovernorListArgs validates argv", () => {
+  it("parseGovernorListArgs validates argv (#7525)", () => {
     expect(parseGovernorListArgs([])).toEqual({
       json: false,
       repoFullName: null,
@@ -54,6 +54,21 @@ describe("loopover-miner governor ledger CLI (#2328)", () => {
     });
     expect(parseGovernorListArgs(["--repo", "bad"])).toEqual({
       error: "Repository must be in owner/repo form.",
+    });
+    // #7525: path-traversal / invalid-character segments share the same CLI error shape as #5831.
+    expect(parseGovernorListArgs(["--repo", "owner/.."])).toEqual({
+      error: "Repository must be in owner/repo form.",
+    });
+    expect(parseGovernorListArgs(["--repo", "../repo"])).toEqual({
+      error: "Repository must be in owner/repo form.",
+    });
+    expect(parseGovernorListArgs(["--repo", "acme\t/widgets"])).toEqual({
+      error: "Repository must be in owner/repo form.",
+    });
+    expect(parseGovernorListArgs(["--repo", "acme/widgets"])).toEqual({
+      json: false,
+      repoFullName: "acme/widgets",
+      type: null,
     });
   });
 

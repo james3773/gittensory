@@ -60,7 +60,7 @@ describe("governor ledger normalization (#2328)", () => {
     ).toThrow(/invalid_event_type/);
   });
 
-  it("rejects malformed repo slugs, blank required strings, and lossy payloads", () => {
+  it("rejects malformed repo slugs, blank required strings, and lossy payloads (#7525 path-safety)", () => {
     const base = {
       eventType: "throttled",
       actionClass: "write",
@@ -72,6 +72,19 @@ describe("governor ledger normalization (#2328)", () => {
     );
     expect(() => normalizeGovernorLedgerEvent({ ...base, repoFullName: "a/b/c" })).toThrow(
       /invalid_repo_full_name/,
+    );
+    // #7525: path-traversal / invalid-character segments (mirrors repo-clone REPO_SEGMENT_PATTERN).
+    expect(() => normalizeGovernorLedgerEvent({ ...base, repoFullName: "owner/.." })).toThrow(
+      /invalid_repo_full_name/,
+    );
+    expect(() => normalizeGovernorLedgerEvent({ ...base, repoFullName: "../repo" })).toThrow(
+      /invalid_repo_full_name/,
+    );
+    expect(() => normalizeGovernorLedgerEvent({ ...base, repoFullName: "o\tbaz/a" })).toThrow(
+      /invalid_repo_full_name/,
+    );
+    expect(normalizeGovernorLedgerEvent({ ...base, repoFullName: "acme/widgets" }).repoFullName).toBe(
+      "acme/widgets",
     );
     expect(() => normalizeGovernorLedgerEvent({ ...base, repoFullName: 42 } as unknown)).toThrow(
       /invalid_repo_full_name/,

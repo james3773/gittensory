@@ -5,6 +5,7 @@ import { runGovernorMetrics } from "./governor-metrics-cli.js";
 /** Must match `GOVERNOR_LEDGER_EVENT_TYPES` in `@loopover/engine`. */
 import { argsWantJson, describeCliError, reportCliFailure } from "./cli-error.js";
 import type { GovernorLedger, GovernorLedgerEntry } from "./governor-ledger.js";
+import { isValidRepoSegment } from "./repo-clone.js";
 
 export type GovernorLedgerEventType = "allowed" | "denied" | "throttled" | "kill_switch";
 
@@ -46,7 +47,7 @@ export type GovernorCliOptions = {
 function parseRepoArg(value: string): ParsedRepoArg {
   const trimmed = value.trim();
   const [owner, repo, extra] = trimmed.split("/");
-  if (!owner || !repo || extra !== undefined) {
+  if (!owner || !repo || extra !== undefined || !isValidRepoSegment(owner) || !isValidRepoSegment(repo)) {
     return { error: "Repository must be in owner/repo form." };
   }
   return { repoFullName: `${owner}/${repo}` };

@@ -67,12 +67,26 @@ describe("loopover-miner portfolio queue CLI (#2292)", () => {
     });
   });
 
-  it("REGRESSION: parseQueueListArgs rejects a missing --repo value, a dashed follow-on, and positionals", () => {
+  it("REGRESSION: parseQueueListArgs rejects a missing --repo value, a dashed follow-on, and positionals (#7525)", () => {
     expect(parseQueueListArgs(["--repo"])).toEqual({ error: expect.stringContaining("Usage:") });
     expect(parseQueueListArgs(["--repo", "--json"])).toEqual({ error: expect.stringContaining("Usage:") });
     expect(parseQueueListArgs(["extra"])).toEqual({ error: expect.stringContaining("Usage:") });
     expect(parseQueueListArgs(["--repo", "notarepo"])).toEqual({
       error: "Repository must be in owner/repo form.",
+    });
+    // #7525: path-traversal / invalid-character segments share the same CLI error shape as #5831.
+    expect(parseQueueListArgs(["--repo", "owner/.."])).toEqual({
+      error: "Repository must be in owner/repo form.",
+    });
+    expect(parseQueueListArgs(["--repo", "../repo"])).toEqual({
+      error: "Repository must be in owner/repo form.",
+    });
+    expect(parseQueueListArgs(["--repo", "acme\n/widgets"])).toEqual({
+      error: "Repository must be in owner/repo form.",
+    });
+    expect(parseQueueListArgs(["--repo", "acme/widgets"])).toEqual({
+      json: false,
+      repoFullName: "acme/widgets",
     });
   });
 

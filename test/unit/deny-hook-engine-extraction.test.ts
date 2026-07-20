@@ -99,6 +99,14 @@ describe("deny-hook engine extraction — synthesizer, via @loopover/engine alon
     expect(() => normalizeRepoFullName("a/b/c")).toThrow("invalid_repo_full_name");
   });
 
+  // #7525: same path-safety as repo-clone.ts REPO_SEGMENT_PATTERN — reject traversal / control chars.
+  it("normalizeRepoFullName rejects a path-traversal or invalid-character segment (#7525)", () => {
+    expect(() => normalizeRepoFullName("owner/..")).toThrow("invalid_repo_full_name");
+    expect(() => normalizeRepoFullName("../repo")).toThrow("invalid_repo_full_name");
+    expect(() => normalizeRepoFullName("o\tbaz/a")).toThrow("invalid_repo_full_name");
+    expect(normalizeRepoFullName("acme/widgets")).toBe("acme/widgets");
+  });
+
   it("normalizeBlockerHistoryRecord degrades a malformed repoFullName to null per-row instead of throwing (#7248)", () => {
     // A well-formed owner/repo is still normalized (surrounding whitespace trimmed).
     expect(normalizeBlockerHistoryRecord({ repoFullName: " owner/repo ", blockerCodes: ["x"] })?.repoFullName).toBe(
@@ -106,7 +114,7 @@ describe("deny-hook engine extraction — synthesizer, via @loopover/engine alon
     );
     // Every shape the strict normalizeRepoFullName THROWS on degrades to null here rather than aborting the row —
     // consistent with the record's other fields, which all degrade gracefully instead of throwing.
-    for (const bad of ["no-slash", "owner/repo/extra", "/leading", "trailing/"]) {
+    for (const bad of ["no-slash", "owner/repo/extra", "/leading", "trailing/", "owner/..", "../repo", "o\tbaz/a"]) {
       expect(normalizeBlockerHistoryRecord({ repoFullName: bad, blockerCodes: ["x"] })?.repoFullName).toBeNull();
     }
     // Empty/whitespace never reaches the strict normalizer and also degrades to null.

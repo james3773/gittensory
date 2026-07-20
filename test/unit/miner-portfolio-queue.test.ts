@@ -212,6 +212,15 @@ describe("loopover-miner portfolio/queue store (#2292)", () => {
     expect(() => store.markFailed("o/a", "  ")).toThrow("invalid_identifier");
   });
 
+  // #7525: extend #5831's repo-clone segment path-safety to the portfolio queue.
+  it("rejects a repoFullName with a path-traversal or invalid-character segment (#7525)", () => {
+    const store = tempStore();
+    expect(() => store.enqueue({ repoFullName: "owner/..", identifier: "1" })).toThrow("invalid_repo_full_name");
+    expect(() => store.enqueue({ repoFullName: "../repo", identifier: "1" })).toThrow("invalid_repo_full_name");
+    expect(() => store.listQueue("o\tbaz/a")).toThrow("invalid_repo_full_name");
+    expect(() => store.enqueue({ repoFullName: "acme/widgets", identifier: "1" })).not.toThrow();
+  });
+
   it("module-level markDone delegates to the default portfolio-queue store", () => {
     const root = mkdtempSync(join(tmpdir(), "loopover-miner-portfolio-default-"));
     roots.push(root);

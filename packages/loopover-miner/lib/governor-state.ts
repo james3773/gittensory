@@ -8,6 +8,7 @@ import type {
 import type { DatabaseSync } from "node:sqlite";
 import { DEFAULT_FORGE_CONFIG } from "./forge-config.js";
 import { normalizeLocalStoreDbPath, openLocalStoreDb, resolveLocalStoreDbPath } from "./local-store.js";
+import { isValidRepoSegment } from "./repo-clone.js";
 import {
   GOVERNOR_OWN_SUBMISSIONS_PURGE_SPEC,
   GOVERNOR_REPUTATION_HISTORY_PURGE_SPEC,
@@ -119,6 +120,7 @@ function normalizeRepoFullName(repoFullName: unknown): string {
   if (typeof repoFullName !== "string") throw new Error("invalid_repo_full_name");
   const [owner, repo, extra] = repoFullName.trim().split("/");
   if (!owner || !repo || extra !== undefined) throw new Error("invalid_repo_full_name");
+  if (!isValidRepoSegment(owner) || !isValidRepoSegment(repo)) throw new Error("invalid_repo_full_name");
   return `${owner}/${repo}`;
 }
 

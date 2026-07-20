@@ -104,6 +104,32 @@ describe("loopover-miner governor ledger (#2328)", () => {
     );
   });
 
+  // #7525: extend #5831's repo-clone segment path-safety to the governor ledger — reject traversal /
+  // control-character segments instead of persisting or filtering on them.
+  it("rejects a repoFullName with a path-traversal or invalid-character segment (#7525)", () => {
+    const ledger = tempLedger();
+    expect(() =>
+      ledger.appendGovernorEvent({
+        eventType: "allowed",
+        repoFullName: "owner/..",
+        actionClass: "analyze",
+        decision: "allow",
+        reason: "ok",
+      }),
+    ).toThrow(/invalid_repo_full_name/);
+    expect(() => ledger.readGovernorEvents({ repoFullName: "../repo" })).toThrow(/invalid_repo_full_name/);
+    expect(() => ledger.readGovernorEvents({ repoFullName: "o\nbaz/a" })).toThrow(/invalid_repo_full_name/);
+    expect(() =>
+      ledger.appendGovernorEvent({
+        eventType: "allowed",
+        repoFullName: "acme/widgets",
+        actionClass: "analyze",
+        decision: "allow",
+        reason: "ok",
+      }),
+    ).not.toThrow();
+  });
+
   it("rejects a corrupted payload blob on read instead of returning malformed data", () => {
     const ledger = tempLedger();
     ledger.appendGovernorEvent({

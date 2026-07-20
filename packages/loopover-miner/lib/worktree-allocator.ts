@@ -6,6 +6,7 @@ import { homedir, hostname } from "node:os";
 import { join } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { normalizeLocalStoreDbPath, openLocalStoreDb, resolveLocalStoreDbPath } from "./local-store.js";
+import { isValidRepoSegment } from "./repo-clone.js";
 
 // Git-worktree-per-attempt allocator (#4297): durable local bookkeeping for which worktree paths are
 // allocated to which fleet attempts. Opens its handle through local-store.js's openLocalStoreDb (#4272), the
@@ -132,6 +133,7 @@ function normalizeRepoFullName(repoFullName: unknown): string {
   if (typeof repoFullName !== "string") throw new Error("invalid_repo_full_name");
   const [owner, repo, extra] = repoFullName.trim().split("/");
   if (!owner || !repo || extra !== undefined) throw new Error("invalid_repo_full_name");
+  if (!isValidRepoSegment(owner) || !isValidRepoSegment(repo)) throw new Error("invalid_repo_full_name");
   return `${owner}/${repo}`;
 }
 

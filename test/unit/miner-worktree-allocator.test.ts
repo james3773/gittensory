@@ -91,6 +91,15 @@ describe("loopover-miner worktree allocator scaffolding (#4298)", () => {
     expect(allocator.release("missing")).toBeNull();
   });
 
+  // #7525: extend #5831's repo-clone segment path-safety to the worktree allocator.
+  it("rejects a repoFullName with a path-traversal or invalid-character segment (#7525)", () => {
+    const allocator = tempAllocator({ maxConcurrency: 1 });
+    expect(() => allocator.acquire("attempt-c", "owner/..")).toThrow("invalid_repo_full_name");
+    expect(() => allocator.acquire("attempt-c", "../repo")).toThrow("invalid_repo_full_name");
+    expect(() => allocator.acquire("attempt-c", "o\tbaz/a")).toThrow("invalid_repo_full_name");
+    expect(() => allocator.acquire("attempt-ok", "acme/widgets")).not.toThrow();
+  });
+
   it("isProcessAlive returns false for invalid or dead pids", () => {
     expect(isProcessAlive(0)).toBe(false);
     expect(isProcessAlive(9_999_999)).toBe(false);
